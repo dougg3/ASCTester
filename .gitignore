@@ -1,0 +1,6 @@
+ASCTester.bin
+ASCTester.code.bin
+ASCTester.code.bin.gdb
+*.o
+ASCTester.ad
+._ASCTester.ad
