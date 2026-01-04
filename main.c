@@ -6,6 +6,8 @@
 #define VIA2Base			0xCEC
 #define VIA2DT				0xD70
 #define ApplScratch			0xA78
+#define BoxFlag				0xCB3
+#define Ticks				0x16A
 
 // Register offsets thanks to:
 // https://github.com/mamedev/mame/blob/master/src/devices/sound/asc.cpp
@@ -51,6 +53,7 @@ typedef void (*VIA2Handler)(void);
 
 typedef struct TestResults
 {
+	uint8_t boxFlag;
 	uint8_t ascVersion;
 	uint16_t via2RepeatOffset;
 	uint8_t initialASCMode;
@@ -59,12 +62,16 @@ typedef struct TestResults
 	bool ascRejects801Write01;
 	uint8_t initialFifoStatus;
 	uint8_t idleFifoStatus;
+	uint8_t via2InitialIER;
+	uint8_t via2IERAfterEnable;
 	uint16_t fifoABytesToFull;
 	uint16_t fifoBBytesToFull;
 	uint32_t iterationsToFifoAHalfEmpty;
 	uint32_t iterationsToFifoBHalfEmpty;
 	uint32_t iterationsToFifoAEmpty;
 	uint32_t iterationsToFifoBEmpty;
+	uint32_t ascIrqCountBeforeFinalWait;
+	uint32_t ascIrqCount;
 } TestResults;
 
 // The base address of the ASC, grabbed from Mac's globals
@@ -120,8 +127,16 @@ static inline void RestoreIRQ(uint16_t sr)
 // Simple ASC IRQ handler that increments a counter.
 // Uses ApplScratch for simplicity. Should be safe as long
 // as we stick to simple stuff during ASC tests.
+// The Mac ROM saves A0-A3 and D0-D3 before executing this,
+// so we shouldn't need to bother saving anything as long
+// as it stays simple.
 static void ASCIRQHandler(void)
 {
+	// Acknowledge the IRQ
+	via2()->irqFlagsBoth = 0x90;
+
+	// Save the tick counter when it occurred, and increment our counter
+	(*(scratchData() + 1)) = Ticks;
 	(*scratchData())++;
 }
 
@@ -134,15 +149,19 @@ static union
 
 int main(void)
 {
-	// Disable IRQs, remember old state
+	// Disable IRQs, remember old state of IRQs and the original ASC IRQ handler
 	uint16_t oldSR = DisableIRQ();
-	//VIA2Handler oldASCIRQHandler = via2Handlers()[4];
+	VIA2Handler oldASCIRQHandler = via2Handlers()[4];
 
-	//*scratchData() = 0;
+	// Clear out the scratch data that our new IRQ handler will use
+	*scratchData() = 0;
 
 	// Install our custom IRQ handler
-	//via2Handlers()[4] = ASCIRQHandler;
+	via2Handlers()[4] = ASCIRQHandler;
+	results.boxFlag = *(uint8_t *)BoxFlag;
 	results.ascVersion = asc()->version;
+
+	// Attempt to calculate how often VIA2 space repeats
 	uint8_t *readLoc = *(uint8_t **)VIA2Base;
 	for (int i = 0; i < 0x200; i++)
 	{
@@ -158,6 +177,33 @@ int main(void)
 		}
 	}
 
+	// Double-check if via2RepeatOffset is 4.
+	// It could mean the entire reading is the same, in which case it's all ONE register.
+	if (results.via2RepeatOffset == 4)
+	{
+		bool foundNonMatch = false;
+		for (int i = 1; i < 0x200; i++)
+		{
+			// If we found a single register that DOESN'T match the
+			// very first register, then we are good to go and it's
+			// truly repeating register space, not just 0x200 repetitions
+			// of the same register.
+			if (buf.bytes[i] != buf.bytes[0])
+			{
+				foundNonMatch = true;
+				break;
+			}
+		}
+
+		// If every byte was identical, it means the entire address space is all the same value,
+		// so we may be looking at an old-style real VIA with huge offsets.
+		if (!foundNonMatch)
+		{
+			results.via2RepeatOffset = 0xFFFF;
+		}
+	}
+
+	// Check the mode register
 	results.initialASCMode = asc()->mode;
 	if (results.initialASCMode != 0)
 	{
@@ -177,6 +223,7 @@ int main(void)
 		asc()->mode = 0;
 	}
 
+	// Check the control register
 	results.initialASCControl = asc()->control;
 
 	// Read once to clear, in case there was an IRQ
@@ -184,18 +231,33 @@ int main(void)
 	// Now read the actual status
 	results.idleFifoStatus = asc()->fifoIRQStatus;
 
-	// Write sound data until FIFO full
+	// Determine if the IRQ is already enabled in VIA2
+	results.via2InitialIER = via2()->irqEnableBoth;
+	// If it wasn't already enabled, try to turn it on
+	if (!(results.via2InitialIER & 0x10))
+	{
+		via2()->irqEnableBoth = 0x90;
+	}
+	results.via2IERAfterEnable = via2()->irqEnableBoth;
+
+	// Write sound data until FIFO full. Start by priming with 0x200 samples
 	asc()->mode = 1;
 	asc()->control = results.initialASCControl | 0x02; // Stereo
+	asc()->fifoIRQStatus; // Make sure status bits are clear after reconfig
+	// Clear any pending IRQ before we do anything
+	via2()->irqFlagsBoth = 0x90;
+
+	// Now enable IRQs and start doing stuff
+	RestoreIRQ(oldSR);
 	for (int i = 0; i < 0x200; i++)
 	{
 		uint8_t nextSample = (i & 0xFF);
 		asc()->fifoA[0] = nextSample;
 		asc()->fifoB[0] = nextSample;
 	}
-	asc()->fifoIRQStatus; // Make sure status bits are clear after reconfig
 	int totalWritten = 0x200;
 
+	// Continue writing until the FIFOs are full
 	while (totalWritten < 0x1000)
 	{
 		const uint8_t irqStat = asc()->fifoIRQStatus;
@@ -241,18 +303,53 @@ int main(void)
 		{
 			results.iterationsToFifoBEmpty = i;
 		}
+
+		if ((results.iterationsToFifoAHalfEmpty != 0) &&
+			(results.iterationsToFifoBHalfEmpty != 0) &&
+			(results.iterationsToFifoAEmpty != 0) &&
+			(results.iterationsToFifoBEmpty != 0))
+		{
+			break;
+		}
+	}
+
+	oldSR = DisableIRQ();
+	results.ascIrqCountBeforeFinalWait = *scratchData();
+	RestoreIRQ(oldSR);
+
+	// Now, let's wait for a while. See if any more IRQs come in.
+	// Just poll the IRQ status register while we do this.
+	for (int i = 0; i < 2000000; i++)
+	{
+		asc()->fifoIRQStatus;
 	}
 
 	// Clean up, to avoid confusing the Sound Manager
+	oldSR = DisableIRQ();
 	asc()->mode = results.initialASCMode;
 	asc()->control = results.initialASCControl;
 	asc()->fifoIRQStatus;
-	// All done, restore old IRQ handler and IRQ state
-	//via2Handlers()[4] = oldASCIRQHandler;
+	// Disable the IRQ if it was originally disabled
+	if (!(results.via2InitialIER & 0x10))
+	{
+		via2()->irqEnableBoth = 0x10;
+	}
+	// Clear it as well
+	via2()->irqFlagsBoth = 0x90;
+	// Restore old IRQ handler and IRQ state
+	via2Handlers()[4] = oldASCIRQHandler;
+	// Save the IRQ count we accumulated
+	results.ascIrqCount = *scratchData();
 	RestoreIRQ(oldSR);
 
+	// All done, now print results
+	printf("BoxFlag: %02X\n", results.boxFlag);
 	printf("ASC Version: $%02X\n", results.ascVersion);
-	if (results.via2RepeatOffset)
+	if (results.via2RepeatOffset == 0xFFFF)
+	{
+		printf("VIA2 reads the same from offset $0 to $200; probably a real VIA\n");
+	}
+	else if (results.via2RepeatOffset != 0)
 	{
 		printf("VIA2 repeats every $%02X bytes\n", results.via2RepeatOffset);
 	}
@@ -262,7 +359,7 @@ int main(void)
 	}
 
 	// Reg $801 tests
-	printf("ASC reg $801 is initially $%02X\n", results.initialASCMode);
+	printf("Reg $801 is initially $%02X\n", results.initialASCMode);
 	if (results.ascRejects801Write00)
 	{
 		printf("ASC rejects $00 write to reg $801\n");
@@ -273,7 +370,11 @@ int main(void)
 	}
 
 	// Reg $802 tests
-	printf("ASC reg $802 is initially $%02X\n", results.initialASCControl);
+	printf("Reg $802 is initially $%02X\n", results.initialASCControl);
+
+	// VIA2 IER tests
+	printf("VIA IER is initially $%02X\n", results.via2InitialIER);
+	printf("VIA IER is $%02X after enabling\n", results.via2IERAfterEnable);
 
 	// Reg $804 tests
 	printf("Reg $804 is $%02X initially\n", results.initialFifoStatus);
@@ -326,6 +427,9 @@ int main(void)
 	{
 		printf("Reg $804 never showed FIFO B empty\n");
 	}
+
+	printf("A total of %d ASC IRQs were observed\n", results.ascIrqCount);
+	printf("%d of these occurred after we were finished observing the flags.\n", results.ascIrqCount - results.ascIrqCountBeforeFinalWait);
 
 	getchar();
 
