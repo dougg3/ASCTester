@@ -2,6 +2,8 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#define USE_MICROSECONDS false
+
 #define ASCBase				0xCC0
 #define VIA2Base			0xCEC
 #define VIA2DT				0xD70
@@ -104,10 +106,21 @@ static inline volatile VIA2Handler *via2Handlers(void)
 	return (VIA2Handler *)VIA2DT;
 }
 
+#if USE_MICROSECONDS
+#define M68K_INLINE(...) = { __VA_ARGS__ }
+enum { _Microseconds = 0xA193 };
+#pragma parameter __D0 Microseconds()
+pascal uint32_t Microseconds() M68K_INLINE(0xA193);
+#endif
+
 // The number of ticks that have elapsed since startup
 static inline uint32_t ticks(void)
 {
+#if USE_MICROSECONDS
+	return Microseconds();
+#else
 	return *(uint32_t *)Ticks;
+#endif
 }
 
 // Pointer to our IRQ count variable (stored in global data so IRQ handler can access it)
