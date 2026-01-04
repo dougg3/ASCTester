@@ -82,6 +82,7 @@ typedef struct TestResults
 	uint32_t fifoAEmptyTicks;
 	uint32_t fifoBEmptyTicks;
 	uint32_t finalWaitBeginTicks;
+	uint32_t finalWaitHalfwayTicks;
 	uint32_t finalWaitEndTicks;
 } TestResults;
 
@@ -383,6 +384,17 @@ int main(void)
 	for (int i = 0; i < 2000000; i++)
 	{
 		CheckIRQTimes();
+
+		// Halfway through, if it's Sonora, disable and re-enable the IRQ to see if anything happens.
+		if (i == 1000000)
+		{
+			if ((results.ascVersion & 0xF0) == 0xB0)
+			{
+				results.finalWaitHalfwayTicks = ticks();
+				asc()->irqB = 1;
+				asc()->irqB = 0;
+			}
+		}
 	}
 	results.finalWaitEndTicks = ticks();
 
@@ -512,6 +524,10 @@ int main(void)
 
 	printf("We began writing sound data at ticks = %u\n", results.startWritingTicks);
 	printf("We waited around doing nothing from ticks = %u to %u\n", results.finalWaitBeginTicks, results.finalWaitEndTicks);
+	if ((results.ascVersion & 0xF0) == 0xB0)
+	{
+		printf("(Toggled IRQ off and on at halfway point ticks = %u)\n", results.finalWaitHalfwayTicks);
+	}
 	printf("A total of %d ASC IRQs were observed\n", results.ascIrqCount);
 	printf("%d of these occurred after we were finished observing the flags.\n", results.ascIrqCount - results.ascIrqCountBeforeFinalWait);
 	printf("IRQ times:\n");
