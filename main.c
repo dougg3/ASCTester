@@ -413,7 +413,7 @@ int main(void)
 	RestoreIRQ(oldSR);
 
 	// All done, now print results
-	printf("BoxFlag: %02X\n", results.boxFlag);
+	printf("BoxFlag: %d\n", results.boxFlag);
 	printf("ASC Version: $%02X\n", results.ascVersion);
 	if (results.via2RepeatOffset == 0xFFFF)
 	{
