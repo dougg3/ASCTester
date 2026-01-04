@@ -379,7 +379,18 @@ int main(void)
 	// Reg $804 tests
 	printf("Reg $804 is $%02X initially\n", results.initialFifoStatus);
 	printf("Reg $804 is $%02X at idle\n", results.idleFifoStatus);
-	if (results.fifoABytesToFull)
+	if (results.fifoABytesToFull == 0x200)
+	{
+		if ((results.ascVersion & 0xF0) == 0xB0)
+		{
+			printf("Reg $804 showed FIFO A full immediately. This is normal for this ASC; it's for recording.\n");
+		}
+		else
+		{
+			printf("Reg $804 showed FIFO A full immediately. This bit is likely not related to playback.\n");
+		}
+	}
+	else if (results.fifoABytesToFull)
 	{
 		printf("Reg $804 showed FIFO A full after %u bytes\n", results.fifoABytesToFull);
 	}
