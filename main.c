@@ -25,7 +25,7 @@ typedef struct ASC
 	uint8_t clockRate;			// 0x807
 	uint8_t padding[0x701];		// 0x808-0xF08
 	uint8_t irqA;				// 0xF09
-	uint8_t padding2[0x19];		// 0xF10-0xF28
+	uint8_t padding2[0x1F];		// 0xF0A-0xF28
 	uint8_t irqB;				// 0xF29
 } ASC;
 
@@ -247,6 +247,12 @@ int main(void)
 	// Clear any pending IRQ before we do anything
 	via2()->irqFlagsBoth = 0x90;
 
+	// If this is a Sonora-based VIA, enable IRQs in the ASC now
+	if ((results.ascVersion & 0xF0) == 0xB0)
+	{
+		asc()->irqB = 0;
+	}
+
 	// Now enable IRQs and start doing stuff
 	RestoreIRQ(oldSR);
 	for (int i = 0; i < 0x200; i++)
@@ -326,6 +332,11 @@ int main(void)
 
 	// Clean up, to avoid confusing the Sound Manager
 	oldSR = DisableIRQ();
+	// If this is a Sonora-based VIA, disable IRQs in the ASC now
+	if ((results.ascVersion & 0xF0) == 0xB0)
+	{
+		asc()->irqB = 1;
+	}
 	asc()->mode = results.initialASCMode;
 	asc()->control = results.initialASCControl;
 	asc()->fifoIRQStatus;
