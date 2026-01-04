@@ -72,6 +72,16 @@ typedef struct TestResults
 	uint32_t iterationsToFifoBEmpty;
 	uint32_t ascIrqCountBeforeFinalWait;
 	uint32_t ascIrqCount;
+	uint32_t ascIrqTicks[20];
+	uint32_t startWritingTicks;
+	uint32_t fifoAFullTicks;
+	uint32_t fifoBFullTicks;
+	uint32_t fifoAHalfEmptyTicks;
+	uint32_t fifoBHalfEmptyTicks;
+	uint32_t fifoAEmptyTicks;
+	uint32_t fifoBEmptyTicks;
+	uint32_t finalWaitBeginTicks;
+	uint32_t finalWaitEndTicks;
 } TestResults;
 
 // The base address of the ASC, grabbed from Mac's globals
@@ -92,9 +102,22 @@ static inline volatile VIA2Handler *via2Handlers(void)
 	return (VIA2Handler *)VIA2DT;
 }
 
-static uint32_t *scratchData(void)
+// The number of ticks that have elapsed since startup
+static inline uint32_t ticks(void)
+{
+	return *(uint32_t *)Ticks;
+}
+
+// Pointer to our IRQ count variable (stored in global data so IRQ handler can access it)
+static uint32_t *irqCountScratchData(void)
 {
 	return (uint32_t *)ApplScratch;
+}
+
+// Pointer to our "last IRQ time in ticks" variable (also stored in global data)
+static uint32_t *irqLastTimeScratchData(void)
+{
+	return (uint32_t *)(ApplScratch + 4);
 }
 
 // Disables interrupts and returns the old SR so they can be restored to what they were
@@ -136,8 +159,8 @@ static void ASCIRQHandler(void)
 	via2()->irqFlagsBoth = 0x90;
 
 	// Save the tick counter when it occurred, and increment our counter
-	(*(scratchData() + 1)) = Ticks;
-	(*scratchData())++;
+	*irqLastTimeScratchData() = ticks();
+	(*irqCountScratchData())++;
 }
 
 static TestResults results;
@@ -147,6 +170,23 @@ static union
 	uint32_t words[0x80];
 } buf;
 
+// Checks to see if an IRQ has happened since the last time we checked, and if so, saves
+// the Ticks variable in an array so we can see when it happened
+static void CheckIRQTimes(void)
+{
+	static uint32_t lastIRQCount = 0;
+	const uint32_t newIRQCount = *irqCountScratchData();
+	const uint32_t newIRQTicks = *irqLastTimeScratchData();
+	if (newIRQCount != lastIRQCount)
+	{
+		for (uint32_t i = lastIRQCount; i < newIRQCount && i < 20; i++)
+		{
+			results.ascIrqTicks[i] = newIRQTicks;
+		}
+		lastIRQCount = newIRQCount;
+	}
+}
+
 int main(void)
 {
 	// Disable IRQs, remember old state of IRQs and the original ASC IRQ handler
@@ -154,7 +194,8 @@ int main(void)
 	VIA2Handler oldASCIRQHandler = via2Handlers()[4];
 
 	// Clear out the scratch data that our new IRQ handler will use
-	*scratchData() = 0;
+	(*irqCountScratchData()) = 0;
+	(*irqLastTimeScratchData()) = 0;
 
 	// Install our custom IRQ handler
 	via2Handlers()[4] = ASCIRQHandler;
@@ -255,11 +296,14 @@ int main(void)
 
 	// Now enable IRQs and start doing stuff
 	RestoreIRQ(oldSR);
+	results.startWritingTicks = ticks();
+	CheckIRQTimes();
 	for (int i = 0; i < 0x200; i++)
 	{
 		uint8_t nextSample = (i & 0xFF);
 		asc()->fifoA[0] = nextSample;
 		asc()->fifoB[0] = nextSample;
+		CheckIRQTimes();
 	}
 	int totalWritten = 0x200;
 
@@ -269,10 +313,12 @@ int main(void)
 		const uint8_t irqStat = asc()->fifoIRQStatus;
 		if ((irqStat & 0x2) && (results.fifoABytesToFull == 0))
 		{
+			results.fifoAFullTicks = ticks();
 			results.fifoABytesToFull = totalWritten;
 		}
 		if ((irqStat & 0x8) && (results.fifoBBytesToFull == 0))
 		{
+			results.fifoBFullTicks = ticks();
 			results.fifoBBytesToFull = totalWritten;
 		}
 
@@ -286,6 +332,7 @@ int main(void)
 		asc()->fifoA[0] = nextSample;
 		asc()->fifoB[0] = nextSample;
 		totalWritten++;
+		CheckIRQTimes();
 	}
 
 	for (int i = 1; i < 1000000; i++)
@@ -293,20 +340,24 @@ int main(void)
 		const uint8_t irqStat = asc()->fifoIRQStatus;
 		if ((irqStat & 0x1) && (results.iterationsToFifoAHalfEmpty == 0))
 		{
+			results.fifoAHalfEmptyTicks = ticks();
 			results.iterationsToFifoAHalfEmpty = i;
 		}
 		if ((irqStat & 0x4) && (results.iterationsToFifoBHalfEmpty == 0))
 		{
+			results.fifoBHalfEmptyTicks = ticks();
 			results.iterationsToFifoBHalfEmpty = i;
 		}
 		if ((irqStat & 0x2) && (results.iterationsToFifoAHalfEmpty != 0) &&
 			(results.iterationsToFifoAEmpty == 0))
 		{
+			results.fifoAEmptyTicks = ticks();
 			results.iterationsToFifoAEmpty = i;
 		}
 		if ((irqStat & 0x8) && (results.iterationsToFifoBHalfEmpty != 0) &&
 			(results.iterationsToFifoBEmpty == 0))
 		{
+			results.fifoBEmptyTicks = ticks();
 			results.iterationsToFifoBEmpty = i;
 		}
 
@@ -317,18 +368,23 @@ int main(void)
 		{
 			break;
 		}
+
+		CheckIRQTimes();
 	}
 
 	oldSR = DisableIRQ();
-	results.ascIrqCountBeforeFinalWait = *scratchData();
+	results.ascIrqCountBeforeFinalWait = *irqCountScratchData();
 	RestoreIRQ(oldSR);
 
 	// Now, let's wait for a while. See if any more IRQs come in.
 	// Just poll the IRQ status register while we do this.
+	results.finalWaitBeginTicks = ticks();
 	for (int i = 0; i < 2000000; i++)
 	{
 		asc()->fifoIRQStatus;
+		CheckIRQTimes();
 	}
+	results.finalWaitEndTicks = ticks();
 
 	// Clean up, to avoid confusing the Sound Manager
 	oldSR = DisableIRQ();
@@ -350,7 +406,7 @@ int main(void)
 	// Restore old IRQ handler and IRQ state
 	via2Handlers()[4] = oldASCIRQHandler;
 	// Save the IRQ count we accumulated
-	results.ascIrqCount = *scratchData();
+	results.ascIrqCount = *irqCountScratchData();
 	RestoreIRQ(oldSR);
 
 	// All done, now print results
@@ -403,7 +459,7 @@ int main(void)
 	}
 	else if (results.fifoABytesToFull)
 	{
-		printf("Reg $804 showed FIFO A full after %u bytes\n", results.fifoABytesToFull);
+		printf("Reg $804 showed FIFO A full after %u bytes (ticks = %u)\n", results.fifoABytesToFull, results.fifoAFullTicks);
 	}
 	else
 	{
@@ -411,7 +467,7 @@ int main(void)
 	}
 	if (results.fifoBBytesToFull)
 	{
-		printf("Reg $804 showed FIFO B full after %u bytes\n", results.fifoBBytesToFull);
+		printf("Reg $804 showed FIFO B full after %u bytes (ticks = %u)\n", results.fifoBBytesToFull, results.fifoBFullTicks);
 	}
 	else
 	{
@@ -419,7 +475,7 @@ int main(void)
 	}
 	if (results.iterationsToFifoAHalfEmpty)
 	{
-		printf("Reg $804 showed FIFO A half empty %u iterations after full\n", results.iterationsToFifoAHalfEmpty);
+		printf("Reg $804 showed FIFO A half empty %u iterations after full (ticks = %u)\n", results.iterationsToFifoAHalfEmpty, results.fifoAHalfEmptyTicks);
 	}
 	else
 	{
@@ -427,7 +483,7 @@ int main(void)
 	}
 	if (results.iterationsToFifoBHalfEmpty)
 	{
-		printf("Reg $804 showed FIFO B half empty %u iterations after full\n", results.iterationsToFifoBHalfEmpty);
+		printf("Reg $804 showed FIFO B half empty %u iterations after full (ticks = %u)\n", results.iterationsToFifoBHalfEmpty, results.fifoBHalfEmptyTicks);
 	}
 	else
 	{
@@ -435,7 +491,7 @@ int main(void)
 	}
 	if (results.iterationsToFifoAEmpty)
 	{
-		printf("Reg $804 showed FIFO A empty %u iterations after full\n", results.iterationsToFifoAEmpty);
+		printf("Reg $804 showed FIFO A empty %u iterations after full (ticks = %u)\n", results.iterationsToFifoAEmpty, results.fifoAEmptyTicks);
 	}
 	else
 	{
@@ -443,15 +499,26 @@ int main(void)
 	}
 	if (results.iterationsToFifoBEmpty)
 	{
-		printf("Reg $804 showed FIFO B empty %u iterations after full\n", results.iterationsToFifoBEmpty);
+		printf("Reg $804 showed FIFO B empty %u iterations after full (ticks = %u)\n", results.iterationsToFifoBEmpty, results.fifoBEmptyTicks);
 	}
 	else
 	{
 		printf("Reg $804 never showed FIFO B empty\n");
 	}
 
+	printf("We began writing sound data at ticks = %u\n", results.startWritingTicks);
+	printf("We waited around doing nothing from ticks = %u to %u\n", results.finalWaitBeginTicks, results.finalWaitEndTicks);
 	printf("A total of %d ASC IRQs were observed\n", results.ascIrqCount);
 	printf("%d of these occurred after we were finished observing the flags.\n", results.ascIrqCount - results.ascIrqCountBeforeFinalWait);
+	printf("IRQ times:\n");
+	for (uint32_t i = 0; i < results.ascIrqCount && i < 20; i++)
+	{
+		printf("#%2u: %u\n", i + 1, results.ascIrqTicks[i]);
+	}
+	if (results.ascIrqCount > 20)
+	{
+		printf("<results truncated>\n");
+	}
 
 	getchar();
 
