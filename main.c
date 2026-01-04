@@ -64,6 +64,7 @@ typedef struct TestResults
 	uint8_t idleFifoStatus;
 	uint8_t via2InitialIER;
 	uint8_t via2IERAfterEnable;
+	uint8_t via2IFRAfterFinished;
 	uint16_t fifoABytesToFull;
 	uint16_t fifoBBytesToFull;
 	uint32_t iterationsToFifoAHalfEmpty;
@@ -385,6 +386,9 @@ int main(void)
 	}
 	results.finalWaitEndTicks = ticks();
 
+	// Sanity check: does the VIA2 say there is an IRQ?
+	results.via2IFRAfterFinished = via2()->irqFlagsBoth;
+
 	// Clean up, to avoid confusing the Sound Manager
 	oldSR = DisableIRQ();
 	// If this is a Sonora-based VIA, disable IRQs in the ASC now
@@ -441,6 +445,7 @@ int main(void)
 	// VIA2 IER tests
 	printf("VIA IER is initially $%02X\n", results.via2InitialIER);
 	printf("VIA IER is $%02X after enabling\n", results.via2IERAfterEnable);
+	printf("VIA IFR was $%02X at the very end of our test\n", results.via2IFRAfterFinished);
 
 	// Reg $804 tests
 	printf("Reg $804 is $%02X initially\n", results.initialFifoStatus);
