@@ -381,7 +381,6 @@ int main(void)
 	results.finalWaitBeginTicks = ticks();
 	for (int i = 0; i < 2000000; i++)
 	{
-		asc()->fifoIRQStatus;
 		CheckIRQTimes();
 	}
 	results.finalWaitEndTicks = ticks();
