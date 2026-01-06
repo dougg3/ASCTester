@@ -178,6 +178,25 @@ static void ASCIRQHandler(void)
 	(*irqCountScratchData())++;
 }
 
+// A different version of the IRQ handler to use on the LC III,
+// which floods IRQs constantly if the ASC is idle
+static void ASCIRQHandler_LCIII(void)
+{
+	// Acknowledge the IRQ
+	via2()->irqFlagsBoth = 0x90;
+
+	// Save the tick counter when it occurred, and increment our counter
+	*irqLastTimeScratchData() = ticks();
+	(*irqCountScratchData())++;
+
+	// If the FIFO B half empty flag is set, shut off IRQ for B.
+	// Otherwise it will flood the IRQ continuously on the LC III.
+	if (asc()->fifoIRQStatus & 0x4)
+	{
+		asc()->irqB = 1;
+	}
+}
+
 static TestResults results;
 static union
 {
@@ -213,9 +232,16 @@ int main(void)
 	(*irqLastTimeScratchData()) = 0;
 
 	// Install our custom IRQ handler
-	via2Handlers()[4] = ASCIRQHandler;
 	results.boxFlag = *(uint8_t *)BoxFlag;
 	results.ascVersion = asc()->version;
+	if (results.ascVersion == 0xBC)
+	{
+		via2Handlers()[4] = ASCIRQHandler_LCIII;
+	}
+	else
+	{
+		via2Handlers()[4] = ASCIRQHandler;
+	}
 
 	// Attempt to calculate how often VIA2 space repeats
 	uint8_t *readLoc = *(uint8_t **)VIA2Base;
@@ -348,6 +374,16 @@ int main(void)
 		asc()->fifoB[0] = nextSample;
 		totalWritten++;
 		CheckIRQTimes();
+	}
+
+	// On the LC III, it's likely the IRQ is off right now because
+	// our IRQ handler automatically disables it when idle to prevent
+	// flooding. So enable it here, since we are actively using it.
+	// Ideally we should notice that the IRQ executes when we reach
+	// half empty.
+	if (results.ascVersion == 0xBC)
+	{
+		asc()->irqB = 0;
 	}
 
 	for (int i = 1; i < 1000000; i++)
