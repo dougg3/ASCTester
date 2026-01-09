@@ -10,14 +10,14 @@ ASCTester.bin: ASCTester.code.bin
 		--copy "ASCTester.code.bin" \
 		"$(RINCLUDES)/Retro68APPL.r" \
 		-t "APPL" -c "????" \
-		-o ASCTester.bin --cc "._ASCTester.ad"
+		-o ASCTester.bin --cc "._ASCTester.ad" --cc ASCTester.dsk
 
-ASCTester.code.bin: main.o
-	$(CC) $< -o $@ $(LDFLAGS)
+ASCTester.code.bin: tests.o
+	$(CC) $^ -o $@ $(LDFLAGS)
 
 .PHONY: clean
 clean:
-	rm -f ASCTester.bin ASCTester.code.bin ASCTester.code.bin.gdb main.o ASCTester.ad ._ASCTester.ad
+	rm -f ASCTester.bin ASCTester.code.bin ASCTester.code.bin.gdb tests.o ASCTester.ad ._ASCTester.ad ASCTester.dsk
 
 .PHONY: test
 test:
