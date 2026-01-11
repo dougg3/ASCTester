@@ -376,6 +376,9 @@ static void Test_FIFOFullHalfFullEmpty_Stereo(void)
 // Tests how often VIA2's address space repeats
 static void Test_VIA2Repeat(void)
 {
+	// TODO: This is broken. It doesn't detect the LC II's repeating space for example.
+	// It repeats every 4 bytes from $00 to $0F, but then $10 to $1F has a different set of repeating 4 bytes.
+	// Then the first set of bytes repeats again from $20 to $2F, the second set repeats from $30 to $3F, and so on.
 	const uint16_t irqState = DisableIRQ();
 
 	uint8_t *readLoc = *(uint8_t **)VIA2Base;

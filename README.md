@@ -60,6 +60,8 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
 
 ## Expected results gathered from working hardware
 
+**NOTE:** VIA2 repetition detection is currently broken and needs to be rewritten with a new algorithm. IIci, Classic II, LC, and LC II are misdetected as a repeat interval of 4 bytes, but in actuality, it's also a repeat of every $20 bytes with additional repetition inside $0 to $10 (one unique set of 4 repeating bytes) and $10 to $20 (a different unique set of 4 repeating bytes). In the future I will fix the algorithm and re-test those machines.
+
 ### Mac IIci
 
 ```
