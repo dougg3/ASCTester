@@ -11,6 +11,8 @@ This is built using [Retro68](https://github.com/autc04/Retro68). To build, run 
 - `export RETRO68="/path/to/Retro68-build/toolchain`
 - `make`
 
+Pre-built binaries are provided: ASCTester.dsk is an 800k disk image suitable for use in emulators, and ASCTester.bin is a MacBinary file.
+
 ## How to use
 
 When you run this program, you should hear a quick blip or two from the speaker, followed by a delay, followed by another blip, followed by another short delay. Then a window will pop up containing test results.
