@@ -42,7 +42,7 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - 1 if bit 3 (full/empty B) is 0 when we first notice bit 2 (half empty B) become 1
   - 1 if bit 1 (full/empty A) is eventually recognized as 1 = empty while waiting after filling it up
   - 1 if bit 3 (full/empty B) is eventually recognized as 1 = empty while waiting after filling it up
-- **VIA2 $xxxx a** &mdash; **$xxxx** is how often the VIA2 address space repeats in bytes, or $FFFF if it doesn't repeat after $200 bytes which likely indicates a "normal" VIA2 with a different register every $200 bytes. **a** is 1 if the VIA2's address space mirroring works correctly with register $1C13 able to configure VIA2's IER regardless of whether it's actually mapped to $1C00 or $13.
+- **VIA2 $xxxx a** &mdash; **$xxxx** is a bitmask of which address bits from A0-A8 appear to be decoded by VIA2, inside of the first $200 bytes of space. If it's 0, it means it fully repeats inside of the first $200 bytes which likely indicates a "normal" VIA2 with a different register every $200 bytes. If it's nonzero, it's likely a pseudo-VIA that looks at a few of the lower address bits for decoding. **a** is 1 if the VIA2's address space mirroring works correctly with register $1C13 able to configure VIA2's IER regardless of whether it's actually mapped to $1C00 or $13.
 - **IRQ** &mdash; the results of several idle IRQ tests, in order:
   - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, without changing register $F29
   - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, without changing register $F29
@@ -62,8 +62,6 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
 
 ## Expected results gathered from working hardware
 
-**NOTE:** VIA2 repetition detection is currently broken and needs to be rewritten with a new algorithm. IIci, Classic II, LC, and LC II are misdetected as a repeat interval of 4 bytes, but in actuality, it's also a repeat of every $20 bytes with additional repetition inside $0 to $10 (one unique set of 4 repeating bytes) and $10 to $20 (a different unique set of 4 repeating bytes). In the future I will fix the algorithm and re-test those machines.
-
 ### Mac IIci
 
 ```
@@ -74,7 +72,7 @@ Mono FIFO Tests:
 0 0 1 0 1 0 1 0 1 0 0 0
 Stereo FIFO Tests:
 0 0 1 1 1 1 1 1 1 1 0 0
-VIA2 $0004 1
+VIA2 $0013 1
 IRQ 0 0 0 0 0 0
 FIFO IRQ 1 0 1 1 0 0 0 0
 ```
@@ -87,7 +85,7 @@ F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
 0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0004 1
+VIA2 $0013 1
 IRQ 1 1 1 0 0 0
 FIFO IRQ 1 1 0 1 0 0 0 0
 ```
@@ -100,7 +98,7 @@ F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
 0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0004 1
+VIA2 $0013 1
 IRQ 1 1 1 0 0 0
 FIFO IRQ 1 1 0 1 0 0 0 0
 ```
@@ -113,7 +111,7 @@ F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
 0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0004 1
+VIA2 $0013 1
 IRQ 1 1 1 0 0 0
 FIFO IRQ 1 1 0 1 0 0 0 0
 ```
@@ -126,7 +124,7 @@ F29Exists: 1  804Idle: $0E  M0: 0 M1: 1 M2: 0
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
 1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $0020 1
+VIA2 $001F 1
 IRQ 0 0 0 1 1 1
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
@@ -139,7 +137,7 @@ F29Exists: 1  804Idle: $0E  M0: 1 M1: 1 M2: 0
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
 1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $FFFF 1
+VIA2 $0000 1
 IRQ 0 0 0 1 0 0
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
@@ -152,7 +150,7 @@ F29Exists: 1  804Idle: $0E  M0: 0 M1: 1 M2: 0
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
 1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $0020 1
+VIA2 $001F 1
 IRQ 0 0 0 1 1 1
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
@@ -165,7 +163,7 @@ F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
 0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0020 1
+VIA2 $001F 1
 IRQ 1 1 1 0 0 0
 FIFO IRQ 1 1 0 1 0 0 0 0
 ```
@@ -178,7 +176,7 @@ F29Exists: 1  804Idle: $0E  M0: 1 M1: 1 M2: 0
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
 1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $FFFF 1
+VIA2 $0000 1
 IRQ 0 0 0 1 0 0
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```

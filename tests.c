@@ -49,9 +49,9 @@ struct TestResults
 	bool shouldTestStereo;					// Whether we should actually test stereo
 	struct FIFOTestResults monoFIFO;		// FIFO test results in mono mode
 	struct FIFOTestResults stereoFIFO;		// FIFO test results in stereo mode
-	uint16_t via2RepeatOffset;				// How often VIA2's address space appears to repeat.
-											// If 0xFFFF, then it's likely a real VIA with a different
-											// register every 0x200 bytes in the space.
+	uint16_t via2AddressDecodeMask;			// Mask of bits that appear to be decoded inside the first 0x200 bytes of VIA2.
+											// If it's 0, it likely means it's a real VIA with a different register every
+											// 0x200 bytes in the VIA2 address space.
 	bool via2MirroringOK;					// Whether the address mirroring of the VIA2 registers works correctly
 	volatile uint32_t tmpIRQCount;			// Temporary counter used during IRQ tests
 	bool idleIRQWithoutF29;					// An IRQ fires immediately when you enable IRQs without register F29 enabled
@@ -376,9 +376,6 @@ static void Test_FIFOFullHalfFullEmpty_Stereo(void)
 // Tests how often VIA2's address space repeats
 static void Test_VIA2Repeat(void)
 {
-	// TODO: This is broken. It doesn't detect the LC II's repeating space for example.
-	// It repeats every 4 bytes from $00 to $0F, but then $10 to $1F has a different set of repeating 4 bytes.
-	// Then the first set of bytes repeats again from $20 to $2F, the second set repeats from $30 to $3F, and so on.
 	const uint16_t irqState = DisableIRQ();
 
 	uint8_t *readLoc = *(uint8_t **)VIA2Base;
@@ -387,42 +384,29 @@ static void Test_VIA2Repeat(void)
 		buf.bytes[i] = *readLoc++;
 	}
 
-	for (int i = 1; i < 0x80; i++)
+	// Check A0-A8 lines against readback of data to glean whether they are used or not
+	// (Those are the address lines that would be used inside 0x200 bytes of space)
+	uint16_t decodeMask = 0;
+	for (int bit = 0; bit <= 8; bit++)
 	{
-		if (buf.words[i] == buf.words[0])
+		bool matters = false;
+		const int mask = (1 << bit);
+		for (int i = 0; i < 0x200; i++)
 		{
-			results.via2RepeatOffset = i * 4;
-			break;
-		}
-	}
-
-	// Double-check if via2RepeatOffset is 4.
-	// It could mean the entire reading is the same, in which case it's ALL
-	// a repeat of the same register.
-	if (results.via2RepeatOffset == 4)
-	{
-		bool foundNonMatch = false;
-		for (int i = 1; i < 0x200; i++)
-		{
-			// If we found a single register that DOESN'T match the
-			// very first register, then we are good to go and it's
-			// truly repeating register space, not just 0x200 repetitions
-			// of the same register.
-			if (buf.bytes[i] != buf.bytes[0])
+			int j = i ^ mask;
+			if ((j < 0x200) && (buf.bytes[i] != buf.bytes[j]))
 			{
-				foundNonMatch = true;
+				matters = true;
 				break;
 			}
 		}
-
-		// If every byte was identical, it means the entire address space is all
-		// the same value, so we may be looking at an old-style real VIA with
-		// huge offsets.
-		if (!foundNonMatch)
+		if (matters)
 		{
-			results.via2RepeatOffset = 0xFFFF;
+			decodeMask |= mask;
 		}
 	}
+
+	results.via2AddressDecodeMask = decodeMask;
 
 	RestoreIRQ(irqState);
 }
@@ -435,7 +419,7 @@ static void Test_VIA2Mirror(void)
 	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
 	bool ok = true;
 
-	const uint16_t actualOffset = (results.via2RepeatOffset == 0xFFFF) ?
+	const uint16_t actualOffset = (results.via2AddressDecodeMask == 0) ?
 		0x1C00 : 0x13;
 
 	// Confirm that writes to 0x1C13 apply to 0x1C00 or 0x13, depending on this machine's VIA2 setup
@@ -845,7 +829,7 @@ int main(void)
 	{
 		PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
 	}
-	printf("VIA2 $%04X %d\n", results.via2RepeatOffset, results.via2MirroringOK);
+	printf("VIA2 $%04X %d\n", results.via2AddressDecodeMask, results.via2MirroringOK);
 	printf("IRQ %d %d %d %d %d %d\n", results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
 			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU);
 	printf("FIFO IRQ %d %d %d %d %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
