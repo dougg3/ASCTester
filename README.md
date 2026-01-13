@@ -180,3 +180,16 @@ VIA2 $0000 1
 IRQ 0 0 0 1 0 0
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
+
+### LC 630
+
+```
+BoxFlag: 92   ASC Version: $BB
+F29Exists: 1  804Idle: $0E  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1
+VIA2 $0000 1
+IRQ 0 0 0 1 0 0
+FIFO IRQ 1 0 0 1 0 0 0 0
+```
