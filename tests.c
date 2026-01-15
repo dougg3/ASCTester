@@ -209,9 +209,11 @@ static void Test_MonoStereoConfigurable(void)
 // FIFO status bits react as expected. No IRQs involved yet.
 static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 {
-	const uint16_t irqState = DisableIRQ();
+	uint16_t irqState = DisableIRQ();
 	const uint8_t originalMode = ascReadReg(0x801);
 	const uint8_t originalControl = ascReadReg(0x802);
+	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF29Value = results.regF29Exists ? ascReadReg(0xF29) : 0;
 
 	// Put in FIFO mode, mono or stereo
 	ascWriteReg(0x801, 1);
@@ -226,6 +228,15 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	// Clear the FIFO if needed
 	ascWriteReg(0x803, 0x80);
 	ascWriteReg(0x803, 0);
+	// Make sure the ASC IRQ is disabled in VIA2 and F29
+	via2WriteReg(0x1C13, 0x10);
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, 1);
+	}
+
+	// Now we can re-enable interrupts
+	RestoreIRQ(irqState);
 
 	// Clear any old status bits just in case
 	(void)ascReadReg(0x804);
@@ -348,6 +359,12 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 		}
 	}
 
+	irqState = DisableIRQ();
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, originalF29Value);
+	}
+	via2WriteReg(0x1C13, irqOriginallyEnabledInVIA2 ? 0x90 : 0x10);
 	ascWriteReg(0x802, originalControl);
 	ascWriteReg(0x801, originalMode);
 	RestoreIRQ(irqState);
