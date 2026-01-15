@@ -65,35 +65,75 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
 ### Mac IIci
 
 ```
+ASCTester test version 2
 BoxFlag: 5   ASC Version: $00
-F29Exists: 0  804Idle: $00  M0: 1 M1: 1 M2: 1
+F29: 0 ($00)  804Idle: $00  M0: 1 M1: 1 M2: 1
 Mono: 1 1 Stereo: 1 1
 Mono FIFO Tests:
 0 0 1 0 1 0 1 0 1 0 0 0
 Stereo FIFO Tests:
 0 0 1 1 1 1 1 1 1 1 0 0
 VIA2 $0013 1
-IRQ 0 0 0 0 0 0
-FIFO IRQ 1 0 1 1 0 0 0 0
-```
-
-### Classic II
-
-```
-BoxFlag: 17   ASC Version: $E0
-F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
-Mono: 1 1 Stereo: 0 0
-Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0013 1
-IRQ 1 1 1 0 0 0
-FIFO IRQ 1 1 0 1 0 0 0 0
+Idle IRQ 0 0 0, 0 0 0, 0 0 0
+FIFO IRQ 1 0 0 0
+(1 1), (1 1), (0 0), (0 0)
 ```
 
 ### LC
 
 ```
+ASCTester test version 2
 BoxFlag: 13   ASC Version: $E8
+F29: 0 ($00)  804Idle: $03  M0: 0 M1: 1 M2: 0
+Mono: 1 1 Stereo: 0 0
+Mono FIFO Tests:
+0 0 1 0 1 0 1 0 1 0 1 0
+VIA2 $0013 1
+Idle IRQ 1 1 1, 0 0 0, 0 0 0
+FIFO IRQ 1 1 0 0
+(0 0), (614 614), (50000 50000), (0 0)
+```
+
+Note: The 614 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
+
+### LC III
+
+```
+ASCTester test version 2
+BoxFlag: 21   ASC Version: $BC
+F29: 1 ($01)  804Idle: $0E  M0: 0 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1
+VIA2 $001F 1
+Idle IRQ 0 0 0, 1 1 1, 1 1 1
+FIFO IRQ 1 0 0 0
+(0 0), (1128 1128), (50000 50000), (0 0)
+```
+
+Note: The 1128 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
+
+### LC 475
+
+```
+ASCTester test version 2
+BoxFlag: 83   ASC Version: $BB
+F29: 1 ($01)  804Idle: $0E  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1
+VIA2 $0000 1
+Idle IRQ 0 0 0, 1 0 0, 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0)
+```
+
+## Older results needing a re-test with the latest version
+
+### Classic II
+
+```
+BoxFlag: 17   ASC Version: $E0
 F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
@@ -114,32 +154,6 @@ Mono FIFO Tests:
 VIA2 $0013 1
 IRQ 1 1 1 0 0 0
 FIFO IRQ 1 1 0 1 0 0 0 0
-```
-
-### LC III
-
-```
-BoxFlag: 21   ASC Version: $BC
-F29Exists: 1  804Idle: $0E  M0: 0 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $001F 1
-IRQ 0 0 0 1 1 1
-FIFO IRQ 1 0 0 1 0 0 0 0
-```
-
-### LC 475
-
-```
-BoxFlag: 83   ASC Version: $BB
-F29Exists: 1  804Idle: $0E  M0: 1 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $0000 1
-IRQ 0 0 0 1 0 0
-FIFO IRQ 1 0 0 1 0 0 0 0
 ```
 
 ### LC 550
