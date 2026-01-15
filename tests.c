@@ -897,6 +897,7 @@ int main(void)
 {
 	DoTests();
 
+	printf("ASCTester test version 2\n");
 	printf("BoxFlag: %d   ASC Version: $%02X\n", results.boxFlag, results.ascVersion);
 	printf("F29: %d ($%02X)  804Idle: $%02X  M0: %d M1: %d M2: %d\n", results.regF29Exists, results.regF29InitialValue,
 			results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2);
