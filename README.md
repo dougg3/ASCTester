@@ -207,3 +207,42 @@ VIA2 $0000 1
 IRQ 0 0 0 1 0 0
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
+
+### Quadra 700
+
+```
+BoxFlag: 16   ASC Version: $B0
+F29Exists: 1  804Idle: $0F  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+0 0 1 1 1 1 1 1 1 1 1 1
+VIA2 $0000 1
+IRQ 1 0 0 1 0 0
+FIFO IRQ 1 0 0 1 0 1 0 0
+```
+
+### Quadra 950
+
+```
+BoxFlag: 20   ASC Version: $B0
+F29Exists: 1  804Idle: $0F  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+0 0 1 1 1 1 1 1 1 1 1 1
+VIA2 $0000 1
+IRQ 0 0 0 1 0 0
+FIFO IRQ 1 0 0 1 0 0 0 0
+```
+
+### PowerBook 520c
+
+```
+BoxFlag: 66   ASC Version: $BB
+F29Exists: 1  804Idle: $0E  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1
+VIA2 $0000 1
+IRQ 0 0 0 1 1 1
+FIFO IRQ 1 0 0 1 0 0 0 0
+```
