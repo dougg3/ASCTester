@@ -68,12 +68,16 @@ struct TestResults
 	bool testedFIFOIRQs;					// True if we actually tested FIFO IRQs. False if we didn't find
 											// a working FIFO during our polling tests.
 	bool fifoIRQTestedWasA;					// True if FIFO A was tested for IRQs; false if FIFO B was tested
-	volatile bool gotIRQOnFIFOFull;					// True if we observed an IRQ when the FIFO filled up
-	volatile bool gotIRQOnFIFOHalfEmpty;				// True if we observed an IRQ when the FIFO became half empty
 	bool gotIRQOnFIFOHalfEmptyTooSoon;		// True if the half empty IRQ was too soon to be real (immediate IRQ)
-	volatile bool gotIRQOnFIFOEmpty;					// True if we observed an IRQ when the FIFO became empty
 	bool gotIRQOnFIFOEmptyTooSoon;			// True if the empty IRQ was too soon to be real
-	volatile bool gotOtherIRQDuringFIFOTest;			// True if we observed any other IRQs during the FIFO test
+	volatile uint32_t fullIRQCount;			// Count of "FIFO full" IRQs we observed
+	volatile uint32_t halfEmptyIRQCount;	// Count of "FIFO half empty" IRQs we observed
+	volatile uint32_t emptyIRQCount;		// Count of "FIFO empty" IRQs we observed
+	volatile uint32_t otherIRQCount;		// Count of other IRQs we observed
+	uint32_t fullIRQMaxDiff;				// Maximum difference in fullIRQCount we see while waiting 4 seconds
+	uint32_t halfEmptyIRQMaxDiff;			// Maximum difference in halfEmptyIRQCount we see while waiting 4 seconds
+	uint32_t emptyIRQMaxDiff;				// Maximum difference in emptyIRQCount we see while waiting 4 seconds
+	uint32_t otherIRQMaxDiff;				// Maximum difference in otherIRQCount we see while waiting 4 seconds
 };
 
 static void Test_MachineInfo(void);
@@ -663,35 +667,39 @@ static void Test_FIFOIRQHandler(void)
 	// Mask so we only look at the bits we care about
 	status &= 0x03;
 
-	// Increment temporary counter
-	r->tmpIRQCount++;
+	bool irqFlood = false;
 
 	if (status == 0x02)
 	{
-		r->gotIRQOnFIFOFull = true;
+		if (++r->fullIRQCount >= IRQ_FLOOD_TEST_COUNT)
+		{
+			irqFlood = true;
+		}
 	}
 	else if (status == 0x01)
 	{
-		r->gotIRQOnFIFOHalfEmpty = true;
-
-		// If we observed a flood of IRQs at idle when register $F29 was active,
-		// be sure it deactivate it now
-		if (r->floodsIRQWithF29)
+		if (++r->halfEmptyIRQCount >= IRQ_FLOOD_TEST_COUNT)
 		{
-			ascWriteReg(0xF29, 1);
+			irqFlood = true;
 		}
 	}
 	else if (status == 0x03)
 	{
-		r->gotIRQOnFIFOEmpty = true;
+		if (++r->emptyIRQCount >= IRQ_FLOOD_TEST_COUNT)
+		{
+			irqFlood = true;
+		}
 	}
 	else
 	{
-		r->gotOtherIRQDuringFIFOTest = true;
+		if (++r->otherIRQCount >= IRQ_FLOOD_TEST_COUNT)
+		{
+			irqFlood = true;
+		}
 	}
 
 	// Safety: if we get too many IRQs, disable it
-	if (r->tmpIRQCount >= IRQ_FLOOD_TEST_COUNT)
+	if (irqFlood)
 	{
 		via2WriteReg(0x1C13, 0x10);
 	}
@@ -727,9 +735,6 @@ static void Test_FIFOIRQ(void)
 		return;
 	}
 
-	// As long as we didn't observe IRQ floods, we can test to see if we are interrupted when the FIFO is empty
-	const bool checkEmptyIRQ = enableF29 ? !results.floodsIRQWithoutF29 : !results.floodsIRQWithF29;
-
 	uint16_t irqState = DisableIRQ();
 	const uint8_t originalMode = ascReadReg(0x801);
 	const uint8_t originalControl = ascReadReg(0x802);
@@ -737,7 +742,6 @@ static void Test_FIFOIRQ(void)
 	const uint8_t originalF29Value = enableF29 ? ascReadReg(0xF29) : 0;
 	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
 	*(TestResults **)ApplScratch = &results;
-	results.tmpIRQCount = 0;
 	via2Handlers()[4] = Test_FIFOIRQHandler;
 
 	// Put in FIFO mode, mono or stereo
@@ -786,48 +790,66 @@ static void Test_FIFOIRQ(void)
 		// The handler will tell us if the FIFO is full, unless the ASC doesn't
 		// interrupt on FIFO full. We already know the FIFO full bit works because
 		// we tested it earlier.
-		if (results.gotIRQOnFIFOFull)
+		if (results.fullIRQCount > 0)
 		{
 			break;
 		}
 	}
 
 	// Make sure we haven't received a half empty or empty IRQ yet. It hasn't had enough time to empty out.
-	if (results.gotIRQOnFIFOHalfEmpty)
+	if (results.halfEmptyIRQCount > 0)
 	{
 		results.gotIRQOnFIFOHalfEmptyTooSoon = true;
 	}
-	if (results.gotIRQOnFIFOEmpty)
+	if (results.emptyIRQCount > 0)
 	{
 		results.gotIRQOnFIFOEmptyTooSoon = true;
 	}
 
-	// Now stop and wait for the FIFO to empty out
-	for (int i = 0; i < 1000000; i++)
+	// Now stop and wait 4 seconds for the FIFO to empty out, see what types of IRQs we get
+	uint32_t maxDiffFull = 0;
+	uint32_t maxDiffHalf = 0;
+	uint32_t maxDiffEmpty = 0;
+	uint32_t maxDiffOther = 0;
+	uint32_t lastFull = 0;
+	uint32_t lastHalf = 0;
+	uint32_t lastEmpty = 0;
+	uint32_t lastOther = 0;
+	const uint32_t startTicks = ticks();
+	while (ticks() - startTicks < 60*4)
 	{
-		if (results.gotIRQOnFIFOHalfEmpty)
-		{
-			break;
-		}
-	}
+		// Sample the four counters that the IRQ will increment
+		const uint32_t newFull = results.fullIRQCount;
+		const uint32_t newHalf = results.halfEmptyIRQCount;
+		const uint32_t newEmpty = results.emptyIRQCount;
+		const uint32_t newOther = results.otherIRQCount;
 
-	// If we just got the half empty IRQ, make sure we haven't seen an empty IRQ yet
-	if (results.gotIRQOnFIFOHalfEmpty && results.gotIRQOnFIFOEmpty)
-	{
-		results.gotIRQOnFIFOEmptyTooSoon = true;
-	}
-
-	// Now, as long as we don't think we'll get an IRQ flood, keep the IRQ on
-	// and see if we get an empty interrupt
-	if (checkEmptyIRQ)
-	{
-		for (int i = 0; i < 1000000; i++)
+		// Calculate the maximum differences we observe while waiting
+		uint32_t diff = newFull - lastFull;
+		if (diff > maxDiffFull)
 		{
-			if (results.gotIRQOnFIFOEmpty)
-			{
-				break;
-			}
+			maxDiffFull = diff;
 		}
+		diff = newHalf - lastHalf;
+		if (diff > maxDiffHalf)
+		{
+			maxDiffHalf = diff;
+		}
+		diff = newEmpty - lastEmpty;
+		if (diff > maxDiffEmpty)
+		{
+			maxDiffEmpty = diff;
+		}
+		diff = newOther - lastOther;
+		if (diff > maxDiffOther)
+		{
+			maxDiffOther = diff;
+		}
+
+		lastFull = newFull;
+		lastHalf = newHalf;
+		lastEmpty = newEmpty;
+		lastOther = newOther;
 	}
 
 	irqState = DisableIRQ();
@@ -841,6 +863,12 @@ static void Test_FIFOIRQ(void)
 	ascWriteReg(0x801, originalMode);
 	(void)ascReadReg(0x804);
 	RestoreIRQ(irqState);
+
+	// Save max differences we observed
+	results.fullIRQMaxDiff = maxDiffFull;
+	results.halfEmptyIRQMaxDiff = maxDiffHalf;
+	results.emptyIRQMaxDiff = maxDiffEmpty;
+	results.otherIRQMaxDiff = maxDiffOther;
 }
 
 // Runs all the tests
@@ -888,9 +916,13 @@ int main(void)
 			results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
 			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
 			results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
-	printf("FIFO IRQ %d %d %d %d %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
-			results.gotIRQOnFIFOFull, results.gotIRQOnFIFOHalfEmpty, results.gotIRQOnFIFOHalfEmptyTooSoon,
-			results.gotIRQOnFIFOEmpty, results.gotIRQOnFIFOEmptyTooSoon, results.gotOtherIRQDuringFIFOTest);
+	printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
+			results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
+	printf("(%u %u), (%u %u), (%u %u), (%u %u)\n",
+			results.fullIRQCount, results.fullIRQMaxDiff,
+			results.halfEmptyIRQCount, results.halfEmptyIRQMaxDiff,
+			results.emptyIRQCount, results.emptyIRQMaxDiff,
+			results.otherIRQCount, results.otherIRQMaxDiff);
 
 	getchar();
 }
