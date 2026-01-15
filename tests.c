@@ -57,10 +57,13 @@ struct TestResults
 	volatile uint32_t tmpIRQCount;			// Temporary counter used during IRQ tests
 	bool idleIRQWithoutF29;					// An IRQ fires immediately when you enable IRQs without register F29 enabled
 	bool idleIRQWithF29;					// An IRQ fires immediately when you enable IRQs with register F29 enabled
+	bool refiresIdleIRQWithF29;				// An IRQ fires immediately if you disable and re-enable F29 again
 	bool floodsIRQWithoutF29;				// Floods IRQ when idle without register F29 enabled
 	bool floodsIRQWithF29;					// Floods IRQ when idle with register F29 enabled (if available)
+	bool refiresIdleIRQFloodWithF29;		// Floods IRQ when idle if you disable and re-enable F29 again
 	bool irqFloodWithoutF29TakesOverCPU;	// (Only if floodsIRQWithoutF29) the IRQ flood takes over the CPU
 	bool irqFloodWithF29TakesOverCPU;		// (Only if floodsIRQWithF29) the IRQ flood takes over the CPU
+	bool irqFloodRefireWithF29TakesOverCPU;	// (Only if refiresIdleIRQFloodWithF29) the IRQ flood takes over the CPU again
 	uint32_t irqCountTest;					// Temporary variable
 	bool testedFIFOIRQs;					// True if we actually tested FIFO IRQs. False if we didn't find
 											// a working FIFO during our polling tests.
@@ -577,6 +580,40 @@ static void Test_IdleIRQ(bool hasF29, bool enableF29)
 		}
 	}
 
+	// If we are in the F29 test, try toggling it to 1 and 0 again to see if it re-fires
+	if (hasF29 && enableF29)
+	{
+		results.tmpIRQCount = 0;
+		via2WriteReg(0x1C13, 0x90); // If it flooded the first time, we need to re-enable it
+		ascWriteReg(0xF29, 1);
+		ascWriteReg(0xF29, 0);
+		RestoreIRQ(irqState);
+		// Immediately read the IRQ count to see how far we get
+		results.irqCountTest = results.tmpIRQCount;
+
+		// Wait for 2 seconds and then clear it again
+		const uint32_t startTicks = ticks();
+		while (ticks() - startTicks < 60*2)
+		{
+		}
+
+		irqState = DisableIRQ();
+
+		// See if re-enabling the IRQ re-fired it and if it flooded again
+		if (results.tmpIRQCount > 0)
+		{
+			results.refiresIdleIRQWithF29 = true;
+		}
+		if (results.tmpIRQCount >= IRQ_FLOOD_TEST_COUNT)
+		{
+			results.refiresIdleIRQFloodWithF29 = true;
+			if (results.irqCountTest >= IRQ_FLOOD_TEST_COUNT)
+			{
+				results.irqFloodRefireWithF29TakesOverCPU = true;
+			}
+		}
+	}
+
 	via2Handlers()[4] = originalASCIRQHandler;
 	if (hasF29)
 	{
@@ -847,8 +884,10 @@ int main(void)
 		PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
 	}
 	printf("VIA2 $%04X %d\n", results.via2AddressDecodeMask, results.via2MirroringOK);
-	printf("IRQ %d %d %d %d %d %d\n", results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
-			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU);
+	printf("Idle IRQ %d %d %d, %d %d %d, %d %d %d\n",
+			results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
+			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
+			results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
 	printf("FIFO IRQ %d %d %d %d %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
 			results.gotIRQOnFIFOFull, results.gotIRQOnFIFOHalfEmpty, results.gotIRQOnFIFOHalfEmptyTooSoon,
 			results.gotIRQOnFIFOEmpty, results.gotIRQOnFIFOEmptyTooSoon, results.gotOtherIRQDuringFIFOTest);
