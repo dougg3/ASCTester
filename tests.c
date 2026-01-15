@@ -292,7 +292,8 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	if (f->aHalfEmptyIsOffWhenFull ||
 		f->bHalfEmptyIsOffWhenFull)
 	{
-		for (int i = 0; i < 1000000; i++)
+		const uint32_t startTicks = ticks();
+		while (ticks() - startTicks < 60*1)
 		{
 			const uint8_t irqState = ascReadReg(0x804);
 			if (irqState & 0x01)
@@ -325,7 +326,8 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	if (f->aEmptyIsOffWhenHalfEmpty ||
 		f->bEmptyIsOffWhenHalfEmpty)
 	{
-		for (int i = 0; i < 1000000; i++)
+		const uint32_t startTicks = ticks();
+		while (ticks() - startTicks < 60*1)
 		{
 			const uint8_t irqState = ascReadReg(0x804);
 			if (irqState & 0x02)
@@ -516,7 +518,9 @@ static void Test_IdleIRQ(bool hasF29, bool enableF29)
 	// Immediately read the IRQ count to see how far we get
 	results.irqCountTest = results.tmpIRQCount;
 
-	for (volatile int i = 0; i < 2000000; i++)
+	// Wait for 2 seconds
+	const uint32_t startTicks = ticks();
+	while (ticks() - startTicks < 60*2)
 	{
 	}
 

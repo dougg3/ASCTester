@@ -40,6 +40,12 @@ static inline volatile VIA2Handler *via2Handlers(void)
 	return (VIA2Handler *)VIA2DT;
 }
 
+// Gets the number of 60 Hz ticks that have elapsed
+static inline uint32_t ticks(void)
+{
+	return *(volatile uint32_t *)Ticks;
+}
+
 // Disables interrupts and returns the old SR so they can be restored to what they were
 static inline uint16_t DisableIRQ(void)
 {
