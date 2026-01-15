@@ -495,11 +495,11 @@ static void Test_IdleIRQHandler(void)
 }
 
 // Tests to see if the ASC floods IRQs while idle
-static void Test_IdleIRQ(bool enableF29)
+static void Test_IdleIRQ(bool hasF29, bool enableF29)
 {
 	uint16_t irqState = DisableIRQ();
 	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
-	const uint8_t originalF29Value = enableF29 ? ascReadReg(0xF29) : 0;
+	const uint8_t originalF29Value = hasF29 ? ascReadReg(0xF29) : 0;
 	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
 
 	*(TestResults **)ApplScratch = &results;
@@ -507,9 +507,9 @@ static void Test_IdleIRQ(bool enableF29)
 	via2Handlers()[4] = Test_IdleIRQHandler;
 	via2WriteReg(0x1C13, 0x90);
 	via2WriteReg(0x1A03, 0x90); // Acknowledge anything already waiting
-	if (enableF29)
+	if (hasF29)
 	{
-		ascWriteReg(0xF29, 0);
+		ascWriteReg(0xF29, enableF29 ? 0 : 1);
 	}
 
 	RestoreIRQ(irqState);
@@ -557,7 +557,7 @@ static void Test_IdleIRQ(bool enableF29)
 	}
 
 	via2Handlers()[4] = originalASCIRQHandler;
-	if (enableF29)
+	if (hasF29)
 	{
 		ascWriteReg(0xF29, originalF29Value);
 	}
@@ -575,7 +575,7 @@ static void Test_IdleIRQ(bool enableF29)
 // Tests to see if IRQs flood at idle without reg $F29
 static void Test_IdleIRQWithoutF29(void)
 {
-	Test_IdleIRQ(false);
+	Test_IdleIRQ(results.regF29Exists, false);
 }
 
 // Tests to see if IRQs flood at idle with reg $F29 = 0 (if it exists)
@@ -583,7 +583,7 @@ static void Test_IdleIRQWithF29(void)
 {
 	if (results.regF29Exists)
 	{
-		Test_IdleIRQ(true);
+		Test_IdleIRQ(results.regF29Exists, true);
 	}
 }
 
