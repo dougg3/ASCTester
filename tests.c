@@ -460,7 +460,7 @@ static void Test_VIA2Mirror(void)
 		ok = false;
 	}
 
-	via2WriteReg(0x1C13, irqOriginallyEnabledInVIA2);
+	via2WriteReg(0x1C13, irqOriginallyEnabledInVIA2 ? 0x90 : 0x10);
 	// Clear any active IRQs just in case
 	via2WriteReg(0x1A03, 0x90);
 
@@ -778,14 +778,7 @@ static void Test_FIFOIRQ(void)
 	{
 		ascWriteReg(0xF29, originalF29Value);
 	}
-	if (irqOriginallyEnabledInVIA2)
-	{
-		ascWriteReg(0x1C13, 0x90);
-	}
-	else
-	{
-		ascWriteReg(0x1C13, 0x10);
-	}
+	via2WriteReg(0x1C13, irqOriginallyEnabledInVIA2 ? 0x90 : 0x10);
 	ascWriteReg(0x802, originalControl);
 	ascWriteReg(0x801, originalMode);
 	(void)ascReadReg(0x804);
