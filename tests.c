@@ -5,7 +5,7 @@
 #include "asctester.h"
 
 // How many IRQs we receive before we consider it "flooding"
-#define IRQ_FLOOD_TEST_COUNT				100
+#define IRQ_FLOOD_TEST_COUNT				50000
 
 typedef void (*ASCTestFunc)(void);
 
