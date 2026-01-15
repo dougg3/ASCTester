@@ -39,6 +39,7 @@ struct TestResults
 	bool isSonoraVersion;					// High nibble of ASC revision is 0xB
 	uint8_t boxFlag;						// Machine identifier byte
 	bool regF29Exists;						// Whether reg 0xF29 appears to exist
+	uint8_t regF29InitialValue;				// Value of reg 0xF29 we first observe (if it exists)
 	uint8_t reg804IdleValue;				// Value of reg 0x804 when ASC is idle
 	bool acceptsMode0;						// Allows writing 0 to reg 0x803
 	bool acceptsMode1;						// Allows writing 1 to reg 0x803
@@ -146,6 +147,8 @@ static void Test_RegF29Exists(void)
 
 	ascWriteReg(0xF29, originalValue);
 	RestoreIRQ(irqState);
+
+	results.regF29InitialValue = originalValue;
 }
 
 // Tests what register $804 is at idle
@@ -816,7 +819,7 @@ int main(void)
 	DoTests();
 
 	printf("BoxFlag: %d   ASC Version: $%02X\n", results.boxFlag, results.ascVersion);
-	printf("F29Exists: %d  804Idle: $%02X  M0: %d M1: %d M2: %d\n", results.regF29Exists,
+	printf("F29: %d ($%02X)  804Idle: $%02X  M0: %d M1: %d M2: %d\n", results.regF29Exists, results.regF29InitialValue,
 			results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2);
 	printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
 			results.acceptsConfigStereo, results.shouldTestStereo);
