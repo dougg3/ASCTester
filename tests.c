@@ -387,6 +387,8 @@ static void Test_VIA2Repeat(void)
 		buf.bytes[i] = *readLoc++;
 	}
 
+	RestoreIRQ(irqState);
+
 	// Check A0-A8 lines against readback of data to glean whether they are used or not
 	// (Those are the address lines that would be used inside 0x200 bytes of space)
 	uint16_t decodeMask = 0;
@@ -410,8 +412,6 @@ static void Test_VIA2Repeat(void)
 	}
 
 	results.via2AddressDecodeMask = decodeMask;
-
-	RestoreIRQ(irqState);
 }
 
 // Tests whether the VIA2 mirroring works (whether you can use $1C13 instead of
