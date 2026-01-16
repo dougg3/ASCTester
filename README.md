@@ -23,7 +23,7 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
 
 - **BoxFlag** &mdash; an identifier of the Mac model
 - **ASC Version** &mdash; the value in register $800 of the ASC containing its revision
-- **F29Exists** &mdash; 1 if we detect that register $F29 actually accepts 1 and 0 as written values, so it probably exists
+- **F29 a (b)** &mdash; **a** is 1 if we detect that register $F29 actually accepts 1 and 0 as written values, so it probably exists. **b** is the value that register $F29 contains when we first look at it, if it exists.
 - **804Idle** &mdash; the value that register $804 contains at idle while nothing sound-related is happening
 - **M0, M1, M2** &mdash; 1 if 0, 1, and 2 are accepted as writes to register $801, respectively
 - **Mono: a b** &mdash; **a** is 1 if register $802 accepts a write of bit 2 = 0; **b** is 1 if ASCTester thinks it should actually test mono
@@ -43,22 +43,30 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - 1 if bit 1 (full/empty A) is eventually recognized as 1 = empty while waiting after filling it up
   - 1 if bit 3 (full/empty B) is eventually recognized as 1 = empty while waiting after filling it up
 - **VIA2 $xxxx a** &mdash; **$xxxx** is a bitmask of which address bits from A0-A8 appear to be decoded by VIA2, inside of the first $200 bytes of space. If it's 0, it means it fully repeats inside of the first $200 bytes which likely indicates a "normal" VIA2 with a different register every $200 bytes. If it's nonzero, it's likely a pseudo-VIA that looks at a few of the lower address bits for decoding. **a** is 1 if the VIA2's address space mirroring works correctly with register $1C13 able to configure VIA2's IER regardless of whether it's actually mapped to $1C00 or $13.
-- **IRQ** &mdash; the results of several idle IRQ tests, in order:
-  - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, without changing register $F29
-  - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, without changing register $F29
-  - 1 if the ASC IRQ flood prevents further ASCTester app instructions from executing (again, no $F29 involved)
-  - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, with register $F29 set to 0
-  - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, with register $F29 set to 0
-  - 1 if the ASC IRQ flood prevents further ASCTester app instructions from executing (again, no $F29 involved)
+- **Idle IRQ** &mdash; the results of several idle IRQ tests, in order:
+  - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, with register $F29 set to 1 if it exists
+  - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, with register $F29 set to 1 if it exists
+  - 1 if the ASC IRQ flood prevents further ASCTester app instructions from executing, with register $F29 set to 1 if it exists
+  - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, with register $F29 set to 0 if it exists
+  - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, with register $F29 set to 0 if it exists
+  - 1 if the ASC IRQ flood prevents further ASCTester app instructions from executing, with register $F29 set to 0 if it exists
+  - 1 if toggling register $F29 to 1 and back to 0 while idle causes the ASC to flag another IRQ
+  - 1 if toggling register $F29 to 1 and back to 0 while idle causes the ASC to flood a bunch of IRQs
+  - 1 if toggling register $F29 to 1 and back to 0 while idle causes an ASC IRQ flood that prevents further instructions from running
 - **FIFO IRQ** &mdash; the results of several IRQ tests while filling and emptying the FIFO, in order:
   - 1 if we actually decided to test a FIFO for IRQ. It might be 0 if we didn't find a sufficient FIFO to test
   - 1 if we used FIFO A status bits for the test, 0 if we used FIFO B status bits (B is preferred unless we detect that the B bits don't work)
-  - 1 if we observed an IRQ when the FIFO filled up
-  - 1 if we observed an IRQ when the FIFO reached half empty after filling up
   - 1 if the half empty IRQ was observed immediately after we filled the FIFO up, which shouldn't happen
-  - 1 if we observed an IRQ when the FIFO reached empty
-  - 1 if the empty IRQ was observed immediately after we filled the FIFO up, which shoiuldn't happen
-  - 1 if we received any other IRQs during the FIFO test that we didn't expect
+  - 1 if the empty IRQ was observed immediately after we filled the FIFO up, which shouldn't happen
+- **(a b), (c d), (e f), (g h)** &mdash; IRQ counts during the FIFO test, in order (over a period of 4 seconds):
+  - **a** is the number of FIFO full IRQs observed
+  - **b** is the maximum increase in FIFO full IRQs that was observed by one loop iteration in the main program
+  - **c** is the number of FIFO half empty IRQs observed
+  - **d** is the maximum increase in FIFO half empty IRQs that was observed by one loop iteration in the main program
+  - **e** is the number of FIFO empty IRQs observed
+  - **f** is the maximum increase in FIFO empty IRQs that was observed by one loop iteration in the main program
+  - **g** is the number of other IRQs observed
+  - **h** is the maximum increase in other IRQs that was observed by one loop iteration in the main program
 
 ## Expected results gathered from working hardware
 
