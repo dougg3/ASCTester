@@ -44,9 +44,10 @@ struct TestResults
 	bool regF29Exists;						// Whether reg 0xF29 appears to exist
 	uint8_t regF29InitialValue;				// Value of reg 0xF29 we first observe (if it exists)
 	uint8_t reg804IdleValue;				// Value of reg 0x804 when ASC is idle
-	bool acceptsMode0;						// Allows writing 0 to reg 0x803
-	bool acceptsMode1;						// Allows writing 1 to reg 0x803
-	bool acceptsMode2;						// Allows writing 2 to reg 0x803
+	uint8_t reg801InitialValue;				// Value of reg 0x801 we first observe
+	bool acceptsMode0;						// Allows writing 0 to reg 0x801
+	bool acceptsMode1;						// Allows writing 1 to reg 0x801
+	bool acceptsMode2;						// Allows writing 2 to reg 0x801
 	bool acceptsConfigMono;					// Allows writing 0 to bit 1 of reg 0x802
 	bool acceptsConfigStereo;				// Allows writing 1 to bit 1 of reg 0x802
 	bool shouldTestMono;					// Whether we should actually test mono
@@ -203,6 +204,8 @@ static void Test_ModeRegisterConfigurable(void)
 
 	ascWriteReg(0x801, originalMode);
 	RestoreIRQ(irqState);
+
+	results.reg801InitialValue = originalMode;
 }
 
 // Tests to see if the mono/stereo bit is writable in $802
