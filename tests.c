@@ -41,7 +41,9 @@ struct TestResults
 	bool isSonoraVersion;					// High nibble of ASC revision is 0xB
 	uint8_t boxFlag;						// Machine identifier byte
 	long sysVersion;						// The system version
+	bool regF09Exists;						// Whether reg 0xF09 appears to exist
 	bool regF29Exists;						// Whether reg 0xF29 appears to exist
+	uint8_t regF09InitialValue;				// Value of reg 0xF09 we first observe (if it exists)
 	uint8_t regF29InitialValue;				// Value of reg 0xF29 we first observe (if it exists)
 	uint8_t reg804IdleValue;				// Value of reg 0x804 when ASC is idle
 	uint8_t reg801InitialValue;				// Value of reg 0x801 we first observe
@@ -86,7 +88,7 @@ struct TestResults
 };
 
 static void Test_MachineInfo(void);
-static void Test_RegF29Exists(void);
+static void Test_RegF09F29Exists(void);
 static void Test_Reg804Idle(void);
 static void Test_ModeRegisterConfigurable(void);
 static void Test_MonoStereoConfigurable(void);
@@ -104,7 +106,7 @@ static void Test_FIFOIRQ(void);
 static ASCTestFunc tests[] =
 {
 	Test_MachineInfo,
-	Test_RegF29Exists,
+	Test_RegF09F29Exists,
 	Test_Reg804Idle,
 	Test_ModeRegisterConfigurable,
 	Test_MonoStereoConfigurable,
@@ -144,15 +146,31 @@ static void Test_MachineInfo(void)
 	}
 }
 
-// Tests to see if register $F29 seems to exist
-static void Test_RegF29Exists(void)
+// Tests to see if registers $F09 and $F29 seem to exist
+static void Test_RegF09F29Exists(void)
 {
+	results.regF09Exists = true;
 	results.regF29Exists = true;
 
 	const uint16_t irqState = DisableIRQ();
-	const uint8_t originalValue = ascReadReg(0xF29);
+	const uint8_t originalF09 = ascReadReg(0xF09);
+	const uint8_t originalF29 = ascReadReg(0xF29);
 
-	// Make sure it can take both 1 and 0 as values
+	// Make sure they can each take both 1 and 0 as values
+	ascWriteReg(0xF09, 0x01);
+	if (ascReadReg(0xF09) != 0x01)
+	{
+		results.regF09Exists = false;
+	}
+	else
+	{
+		ascWriteReg(0xF09, 0x00);
+		if (ascReadReg(0xF09) != 0x00)
+		{
+			results.regF09Exists = false;
+		}
+	}
+
 	ascWriteReg(0xF29, 0x01);
 	if (ascReadReg(0xF29) != 0x01)
 	{
@@ -167,10 +185,12 @@ static void Test_RegF29Exists(void)
 		}
 	}
 
-	ascWriteReg(0xF29, originalValue);
+	ascWriteReg(0xF09, originalF09);
+	ascWriteReg(0xF29, originalF29);
 	RestoreIRQ(irqState);
 
-	results.regF29InitialValue = originalValue;
+	results.regF09InitialValue = originalF09;
+	results.regF29InitialValue = originalF29;
 }
 
 // Tests what register $804 is at idle
@@ -936,8 +956,11 @@ int main(void)
 	printf("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
 			(results.sysVersion >> 8) & 0xFF, (results.sysVersion >> 4) & 0x0F,
 			results.sysVersion & 0x0F);
-	printf("F29: %d ($%02X)  804Idle: $%02X  M0: %d M1: %d M2: %d\n", results.regF29Exists, results.regF29InitialValue,
-			results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2);
+	printf("F09: %d ($%02X)  F29: %d ($%02X)\n",
+			results.regF09Exists, results.regF09InitialValue,
+			results.regF29Exists, results.regF29InitialValue);
+	printf("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
+			results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2, results.reg801InitialValue);
 	printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
 			results.acceptsConfigStereo, results.shouldTestStereo);
 
