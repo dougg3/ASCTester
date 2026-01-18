@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include "asctester.h"
 
 // How many IRQs we receive before we consider it "flooding"
@@ -54,6 +55,7 @@ struct TestResults
 											// If it's 0, it likely means it's a real VIA with a different register every
 											// 0x200 bytes in the VIA2 address space.
 	bool via2MirroringOK;					// Whether the address mirroring of the VIA2 registers works correctly
+	bool via2ReadbackConsistent;			// Whether we read back 2 identical copies of the beginning of VIA2 space during our test
 	volatile uint32_t tmpIRQCount;			// Temporary counter used during IRQ tests
 	bool idleIRQWithoutF29;					// An IRQ fires immediately when you enable IRQs without register F29 enabled
 	bool idleIRQWithF29;					// An IRQ fires immediately when you enable IRQs with register F29 enabled
@@ -115,11 +117,14 @@ static ASCTestFunc tests[] =
 static struct TestResults results;
 
 // Temporary buffer for storing stuff
-static union
+union TempBuffer
 {
 	uint8_t bytes[0x200];
 	uint32_t words[0x80];
-} buf;
+};
+
+static union TempBuffer buf;
+static union TempBuffer buf2;
 
 // Just grabs the ASC version and BoxFlag
 static void Test_MachineInfo(void)
@@ -407,11 +412,29 @@ static void Test_VIA2Repeat(void)
 {
 	const uint16_t irqState = DisableIRQ();
 
-	uint8_t *readLoc = *(uint8_t **)VIA2Base;
-	for (int i = 0; i < 0x200; i++)
+	// Read the first 0x200 bytes of VIA2.
+	// Do it multiple times until we get two identical readbacks.
+	// If we try 1000 times and can't get a consistent readback, then move on.
+	bool consistentReadback = false;
+	for (int i = 0; !consistentReadback && i < 1000; i++)
 	{
-		buf.bytes[i] = *readLoc++;
+		uint32_t *readLoc = *(uint32_t **)VIA2Base;
+		TempBuffer *destBuf = (i & 1) ? &buf : &buf2;
+
+		for (int j = 0; j < 0x80; j++)
+		{
+			destBuf->words[j] = *readLoc++;
+		}
+
+		if (i > 0)
+		{
+			if (!memcmp(buf.bytes, buf2.bytes, sizeof(TempBuffer)))
+			{
+				consistentReadback = true;
+			}
+		}
 	}
+	results.via2ReadbackConsistent = consistentReadback;
 
 	RestoreIRQ(irqState);
 
@@ -912,7 +935,7 @@ int main(void)
 	{
 		PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
 	}
-	printf("VIA2 $%04X %d\n", results.via2AddressDecodeMask, results.via2MirroringOK);
+	printf("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
 	printf("Idle IRQ %d %d %d, %d %d %d, %d %d %d\n",
 			results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
 			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
