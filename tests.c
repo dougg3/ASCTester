@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <Gestalt.h>
 #include "asctester.h"
 
 // How many IRQs we receive before we consider it "flooding"
@@ -39,6 +40,7 @@ struct TestResults
 	uint8_t ascVersion;						// ASC revision identifier byte
 	bool isSonoraVersion;					// High nibble of ASC revision is 0xB
 	uint8_t boxFlag;						// Machine identifier byte
+	long sysVersion;						// The system version
 	bool regF29Exists;						// Whether reg 0xF29 appears to exist
 	uint8_t regF29InitialValue;				// Value of reg 0xF29 we first observe (if it exists)
 	uint8_t reg804IdleValue;				// Value of reg 0x804 when ASC is idle
@@ -132,6 +134,13 @@ static void Test_MachineInfo(void)
 	results.ascVersion = ascReadReg(0x800);
 	results.isSonoraVersion = (results.ascVersion & 0xB0) == 0xB0;
 	results.boxFlag = *(uint8_t *)BoxFlag;
+
+	long response;
+	OSErr err = Gestalt(gestaltSystemVersion, &response);
+	if (err == noErr)
+	{
+		results.sysVersion = response;
+	}
 }
 
 // Tests to see if register $F29 seems to exist
@@ -921,7 +930,9 @@ int main(void)
 	DoTests();
 
 	printf("ASCTester test version 2\n");
-	printf("BoxFlag: %d   ASC Version: $%02X\n", results.boxFlag, results.ascVersion);
+	printf("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
+			(results.sysVersion >> 8) & 0xFF, (results.sysVersion >> 4) & 0x0F,
+			results.sysVersion & 0x0F);
 	printf("F29: %d ($%02X)  804Idle: $%02X  M0: %d M1: %d M2: %d\n", results.regF29Exists, results.regF29InitialValue,
 			results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2);
 	printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
