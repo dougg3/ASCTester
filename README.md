@@ -87,6 +87,23 @@ FIFO IRQ 1 0 0 0
 (1 1), (1 1), (0 0), (0 0)
 ```
 
+### Mac IIfx
+
+```
+ASCTester test version 2
+BoxFlag: 7   ASC Version: $00
+F29: 0 ($00)  804Idle: $00  M0: 1 M1: 1 M2: 1
+Mono: 1 1 Stereo: 1 1
+Mono FIFO Tests:
+0 0 1 0 1 0 0 0 0 0 0 0
+Stereo FIFO Tests:
+0 0 0 1 0 1 1 1 1 1 0 0
+VIA2 $000F 0
+Idle IRQ 0 0 0, 0 0 0, 0 0 0
+FIFO IRQ 1 0 0 0
+(1 1), (1 1), (0 0), (0 0)
+```
+
 ### LC
 
 ```
@@ -135,6 +152,108 @@ Idle IRQ 0 0 0, 1 0 0, 1 0 0
 FIFO IRQ 1 0 0 0
 (0 0), (1 1), (0 0), (0 0)
 ```
+
+### Quadra 700
+
+```
+ASCTester test version 2
+BoxFlag: 16   ASC Version: $B0
+F29: 1 ($01)  804Idle: $0F  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+0 0 1 1 1 1 1 1 1 1 1 1
+VIA2 $0000 1
+Idle IRQ 0 0 0, 1 0 0, 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (3 1), (237 1), (0 0)
+```
+
+Note: depending on certain factors including whether a sound has already been played by the machine, the F29 test may print `($00)` instead of `($01)`. In that case, first `Idle IRQ` triplet will likely be `1 0 0`.
+
+Slightly different results have been observed on different machines for the bottom line, but it should be something in that ballpark.
+
+This machine's behavior is different from other similar machines with the $B0 revision simply because Apple has a special VBL task in the Sound Manager specifically targeted at the Quadra 700 and 900. It interferes with the tests.
+
+### Quadra 950
+
+```
+ASCTester test version 2
+BoxFlag: 20   ASC Version: $B0
+F29: 1 ($01)  804Idle: $0F  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+0 0 1 1 1 1 1 1 1 1 1 1
+VIA2 $0000 1
+Idle IRQ 0 0 0, 1 0 0, 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0)
+```
+
+Note: The bottom line will change if you are moving the mouse during the tests. This is due to something similar to what is mentioned about the Quadra 700, but the special interfering code is in the ROM this time, and it only runs if the mouse or keyboard is being used.
+
+### Quadra 800
+
+```
+ASCTester test version 2
+BoxFlag: 29   ASC Version: $BB
+F29: 1 ($01)  804Idle: $0E  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1
+VIA2 $0000 1
+Idle IRQ 0 0 0, 1 0 0, 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0)
+```
+
+### PowerBook 180
+
+```
+ASCTester test version 2
+BoxFlag: 27   ASC Version: $B0
+F29: 1 ($01)  804Idle: $0F  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+0 0 1 1 1 1 1 1 1 1 1 1
+VIA2 $0000 1
+Idle IRQ 0 0 0, 1 0 0, 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0)
+```
+
+### PowerBook Duo 280c
+
+```
+ASCTester test version 2
+BoxFlag: 97   ASC Version: $E9
+F29: 0 ($00)  804Idle: $03  M0: 0 M1: 1 M2: 0
+Mono: 1 1 Stereo: 0 0
+Mono FIFO Tests:
+0 0 1 0 1 0 1 0 1 0 1 0
+VIA2 $01FF 1
+Idle IRQ 1 1 1, 0 0 0, 0 0 0
+FIFO IRQ 1 1 0 0
+(0 0), (4582 4582), (50000 50000), (0 0)
+```
+
+Note: The 4582 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
+
+### PowerBook 520c/540c
+
+```
+ASCTester test version 2
+BoxFlag: 66   ASC Version: $BB
+F29: 1 ($01)  804Idle: $0E  M0: 1 M1: 1 M2: 0
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1
+VIA2 $0000 1
+Idle IRQ 0 0 0, 1 1 1, 1 1 1
+FIFO IRQ 1 0 0 0
+(0 0), (4086 4086), (50000 50000), (0 0)
+```
+
+Note: The 4086 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
 
 ## Older results needing a re-test with the latest version
 
@@ -213,44 +332,5 @@ Stereo FIFO Tests:
 1 0 1 1 1 1 0 1 0 1 1 1
 VIA2 $0000 1
 IRQ 0 0 0 1 0 0
-FIFO IRQ 1 0 0 1 0 0 0 0
-```
-
-### Quadra 700
-
-```
-BoxFlag: 16   ASC Version: $B0
-F29Exists: 1  804Idle: $0F  M0: 1 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-0 0 1 1 1 1 1 1 1 1 1 1
-VIA2 $0000 1
-IRQ 1 0 0 1 0 0
-FIFO IRQ 1 0 0 1 0 1 0 0
-```
-
-### Quadra 950
-
-```
-BoxFlag: 20   ASC Version: $B0
-F29Exists: 1  804Idle: $0F  M0: 1 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-0 0 1 1 1 1 1 1 1 1 1 1
-VIA2 $0000 1
-IRQ 0 0 0 1 0 0
-FIFO IRQ 1 0 0 1 0 0 0 0
-```
-
-### PowerBook 520c
-
-```
-BoxFlag: 66   ASC Version: $BB
-F29Exists: 1  804Idle: $0E  M0: 1 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $0000 1
-IRQ 0 0 0 1 1 1
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
