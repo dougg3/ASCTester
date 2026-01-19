@@ -32,6 +32,8 @@ struct FIFOTestResults
 											// to indicate that FIFO A is completely empty
 	bool bReachesEmpty;						// (Only if bReachesFull) we eventually notice bit 3 of reg 0x804 become 1 again
 											// to indicate that FIFO B is completely empty
+	uint32_t aFullCount;					// Number of samples written to FIFO A before it's marked as full
+	uint32_t bFullCount;					// Number of samples written to FIFO B before it's marked as full
 };
 
 // Test results
@@ -315,18 +317,20 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 				ascWriteReg(0x400, nextSample);
 			}
 			const uint8_t irqState = ascReadReg(0x804);
-			if (irqState & 0x02)
+			if ((irqState & 0x02) && !f->aReachesFull)
 			{
 				f->aReachesFull = true;
+				f->aFullCount = i + 0x101;
 				if (!(irqState & 0x01))
 				{
 					f->aHalfEmptyIsOffWhenFull = true;
 				}
 
 			}
-			if (irqState & 0x08)
+			if ((irqState & 0x08) && !f->bReachesFull)
 			{
 				f->bReachesFull = true;
+				f->bFullCount = i + 0x101;
 				if (!(irqState & 0x04))
 				{
 					f->bHalfEmptyIsOffWhenFull = true;
@@ -401,6 +405,16 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 				break;
 			}
 		}
+	}
+
+	// Remove misleading results
+	if (f->aFullTooSoon)
+	{
+		f->aFullCount = 0;
+	}
+	if (f->bFullTooSoon)
+	{
+		f->bFullCount = 0;
 	}
 
 	irqState = DisableIRQ();
@@ -939,13 +953,14 @@ void DoTests(void)
 void PrintFIFOTests(const char *title, struct FIFOTestResults const *f)
 {
 	printf("%s:\n", title);
-	printf("%d %d %d %d %d %d %d %d %d %d %d %d\n",
+	printf("%d %d %d %d %d %d %d %d %d %d %d %d (%u %u)\n",
 			f->aFullTooSoon, f->bFullTooSoon,
 			f->aReachesFull, f->bReachesFull,
 			f->aHalfEmptyIsOffWhenFull, f->bHalfEmptyIsOffWhenFull,
 			f->aHalfEmptyTurnsOn, f->bHalfEmptyTurnsOn,
 			f->aEmptyIsOffWhenHalfEmpty, f->bEmptyIsOffWhenHalfEmpty,
-			f->aReachesEmpty, f->bReachesEmpty);
+			f->aReachesEmpty, f->bReachesEmpty,
+			f->aFullCount, f->bFullCount);
 }
 
 int main(void)
