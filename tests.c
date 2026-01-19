@@ -73,6 +73,8 @@ struct TestResults
 	bool irqFloodWithoutF29TakesOverCPU;	// (Only if floodsIRQWithoutF29) the IRQ flood takes over the CPU
 	bool irqFloodWithF29TakesOverCPU;		// (Only if floodsIRQWithF29) the IRQ flood takes over the CPU
 	bool irqFloodRefireWithF29TakesOverCPU;	// (Only if refiresIdleIRQFloodWithF29) the IRQ flood takes over the CPU again
+	uint32_t idleIRQWithF29Count;			// Total count of IRQs observed at idle without F29 enabled
+	uint32_t idleIRQWithoutF29Count;		// Total count of IRQs observed at idle with F29 enabled (if available)
 	uint32_t irqCountTest;					// Temporary variable
 	bool testedFIFOIRQs;					// True if we actually tested FIFO IRQs. False if we didn't find
 											// a working FIFO during our polling tests.
@@ -653,6 +655,15 @@ static void Test_IdleIRQ(bool hasF29, bool enableF29)
 		}
 	}
 
+	if (enableF29)
+	{
+		results.idleIRQWithF29Count = results.tmpIRQCount;
+	}
+	else
+	{
+		results.idleIRQWithoutF29Count = results.tmpIRQCount;
+	}
+
 	// If we are in the F29 test, try toggling it to 1 and 0 again to see if it re-fires
 	if (hasF29 && enableF29)
 	{
@@ -988,9 +999,11 @@ int main(void)
 		PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
 	}
 	printf("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
-	printf("Idle IRQ %d %d %d, %d %d %d, %d %d %d\n",
+	printf("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
 			results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
+			results.idleIRQWithoutF29Count,
 			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
+			results.idleIRQWithF29Count,
 			results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
 	printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
 			results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
