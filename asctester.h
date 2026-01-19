@@ -7,6 +7,7 @@
 #define ApplScratch			0xA78
 #define BoxFlag				0xCB3
 #define Ticks				0x16A
+#define AddrMapFlags		0xDD0
 
 typedef void (*VIA2Handler)(void);
 
@@ -44,6 +45,11 @@ static inline volatile VIA2Handler *via2Handlers(void)
 static inline uint32_t ticks(void)
 {
 	return *(volatile uint32_t *)Ticks;
+}
+
+static inline uint32_t addrMapFlags(void)
+{
+	return *(uint32_t *)AddrMapFlags;
 }
 
 // Disables interrupts and returns the old SR so they can be restored to what they were

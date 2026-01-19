@@ -1104,43 +1104,69 @@ void PrintFIFOTests(const char *title, struct FIFOTestResults const *f)
 
 int main(void)
 {
-	DoTests();
+	// Only do tests if we can
+	const uint32_t flags = addrMapFlags();
+	const bool via2Exists = flags & (1U << 11);
+	const bool ascExists = flags & (1U << 12);
+	const bool rbvExists = flags & (1U << 13);
+
+	if (ascExists && (via2Exists || rbvExists))
+	{
+		DoTests();
+	}
 
 	printf("ASCTester test version 2\n");
-	printf("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
-			(results.sysVersion >> 8) & 0xFF, (results.sysVersion >> 4) & 0x0F,
-			results.sysVersion & 0x0F);
-	printf("F09: %d ($%02X)  F29: %d ($%02X)\n",
-			results.regF09Exists, results.regF09InitialValue,
-			results.regF29Exists, results.regF29InitialValue);
-	printf("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
-			results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2, results.reg801InitialValue);
-	printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
-			results.acceptsConfigStereo, results.shouldTestStereo);
 
-	if (results.shouldTestMono)
+	if (ascExists && (via2Exists || rbvExists))
 	{
-		PrintFIFOTests("Mono FIFO Tests", &results.monoFIFO);
+		printf("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
+				(results.sysVersion >> 8) & 0xFF, (results.sysVersion >> 4) & 0x0F,
+				results.sysVersion & 0x0F);
+		printf("AddrMapFlags: $%08X\n", flags);
+		printf("F09: %d ($%02X)  F29: %d ($%02X)\n",
+				results.regF09Exists, results.regF09InitialValue,
+				results.regF29Exists, results.regF29InitialValue);
+		printf("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
+				results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2, results.reg801InitialValue);
+		printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
+				results.acceptsConfigStereo, results.shouldTestStereo);
+
+		if (results.shouldTestMono)
+		{
+			PrintFIFOTests("Mono FIFO Tests", &results.monoFIFO);
+		}
+		if (results.shouldTestStereo)
+		{
+			PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
+		}
+		printf("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
+		printf("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
+				results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
+				results.idleIRQWithoutF29Count,
+				results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
+				results.idleIRQWithF29Count,
+				results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
+		printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
+				results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
+		printf("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
+				results.fullIRQCount, results.fullIRQMaxDiff,
+				results.halfEmptyIRQCount, results.halfEmptyIRQMaxDiff,
+				results.emptyIRQCount, results.emptyIRQMaxDiff,
+				results.otherIRQCount, results.otherIRQMaxDiff,
+				results.fifoIRQFiredAfterToggleWhenFull);
 	}
-	if (results.shouldTestStereo)
+	else
 	{
-		PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
+		printf("BoxFlag: %d cannot be tested. AddrMapFlags: $%08X\n", *(uint8_t *)BoxFlag, flags);
+		if (!ascExists)
+		{
+			printf("- ASC address map flag isn't valid\n");
+		}
+		if (!via2Exists && !rbvExists)
+		{
+			printf("- VIA2 and RBV address map flags aren't valid\n");
+		}
 	}
-	printf("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
-	printf("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
-			results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
-			results.idleIRQWithoutF29Count,
-			results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
-			results.idleIRQWithF29Count,
-			results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
-	printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
-			results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
-	printf("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
-			results.fullIRQCount, results.fullIRQMaxDiff,
-			results.halfEmptyIRQCount, results.halfEmptyIRQMaxDiff,
-			results.emptyIRQCount, results.emptyIRQMaxDiff,
-			results.otherIRQCount, results.otherIRQMaxDiff,
-			results.fifoIRQFiredAfterToggleWhenFull);
 
 	getchar();
 }
