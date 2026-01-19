@@ -221,6 +221,23 @@ FIFO IRQ 1 0 0 0
 (0 0), (1 1), (0 0), (0 0)
 ```
 
+### PowerBook Duo 210
+
+```
+ASCTester test version 2
+BoxFlag: 23   ASC Version: $E9
+F29: 0 ($00)  804Idle: $03  M0: 0 M1: 1 M2: 0
+Mono: 1 1 Stereo: 0 0
+Mono FIFO Tests:
+0 0 1 0 1 0 1 0 1 0 1 0
+VIA2 $00FF 1
+Idle IRQ 1 1 1, 0 0 0, 0 0 0
+FIFO IRQ 1 1 0 0
+(0 0), (1352 1352), (50000 50000), (0 0)
+```
+
+Note: The 1352 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
+
 ### PowerBook Duo 280c
 
 ```
