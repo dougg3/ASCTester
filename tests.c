@@ -95,6 +95,9 @@ struct TestResults
 													// If F29 exists, we use that for the toggle. Otherwise, VIA2.
 };
 
+static void DisableASCVBLTask(void);
+static void RestoreASCVBLTask(void);
+
 static void Test_MachineInfo(void);
 static void Test_RegF09F29Exists(void);
 static void Test_Reg804Idle(void);
@@ -114,6 +117,7 @@ static void Test_FIFOIRQ_WhileFull(void);
 // List of all tests
 static ASCTestFunc tests[] =
 {
+	DisableASCVBLTask,
 	Test_MachineInfo,
 	Test_RegF09F29Exists,
 	Test_Reg804Idle,
@@ -127,6 +131,7 @@ static ASCTestFunc tests[] =
 	Test_IdleIRQWithF29,
 	Test_FIFOIRQ,
 	Test_FIFOIRQ_WhileFull,
+	RestoreASCVBLTask,
 };
 
 static struct TestResults results;
@@ -140,6 +145,63 @@ union TempBuffer
 
 static union TempBuffer buf;
 static union TempBuffer buf2;
+
+static VBLTask *ascVBLTask;
+static ProcPtr originalASCVBLFunc;
+
+// A simple VBL task function that does nothing and schedules
+// itself to run again in 30 ticks
+#pragma parameter DummyASCVBLTask(__A0)
+static void DummyASCVBLTask(VBLTask *task)
+{
+	task->vblCount = 30;
+}
+
+// The Quadra 700 and 900 have a VBL task that interferes with ASCTester's
+// IRQ tests. Locate it and disable it if it exists.
+static void DisableASCVBLTask(void)
+{
+	const uint16_t irqState = DisableIRQ();
+	QHdr vblQueue = LMGetVBLQueue();
+	if (vblQueue.qHead)
+	{
+		VBLTask *task = (VBLTask *)(vblQueue.qHead);
+		while (task)
+		{
+			// Confirmed to be like this in 7.1, 7.6, 8.0, and 8.1
+			static const uint8_t ascVBLStart[10] = {
+				0x31, 0x7C, 0x00, 0x1E, 0x00, 0x0A,
+				0x22, 0x78, 0x0C, 0xC0
+			};
+			if (!memcmp((uint8_t *)task->vblAddr, ascVBLStart, sizeof(ascVBLStart)))
+			{
+				ascVBLTask = task;
+				originalASCVBLFunc = task->vblAddr;
+				task->vblAddr = (ProcPtr)DummyASCVBLTask;
+
+				// We found it, bail now
+				RestoreIRQ(irqState);
+				return;
+			}
+			task = (VBLTask *)task->qLink;
+		}
+	}
+
+	// Didn't find one
+	ascVBLTask = NULL;
+	RestoreIRQ(irqState);
+}
+
+// Restore the VBL task if we disabled it.
+static void RestoreASCVBLTask(void)
+{
+	const uint16_t irqState = DisableIRQ();
+	if (ascVBLTask)
+	{
+		ascVBLTask->vblAddr = originalASCVBLFunc;
+	}
+	RestoreIRQ(irqState);
+}
 
 // Just grabs the ASC version and BoxFlag
 static void Test_MachineInfo(void)
@@ -1154,6 +1216,10 @@ int main(void)
 				results.emptyIRQCount, results.emptyIRQMaxDiff,
 				results.otherIRQCount, results.otherIRQMaxDiff,
 				results.fifoIRQFiredAfterToggleWhenFull);
+		if (ascVBLTask)
+		{
+			printf("ASC VBL Task was located and temporarily disabled during this test.\n");
+		}
 	}
 	else
 	{
