@@ -89,6 +89,10 @@ struct TestResults
 	uint32_t halfEmptyIRQMaxDiff;			// Maximum difference in halfEmptyIRQCount we see while waiting 4 seconds
 	uint32_t emptyIRQMaxDiff;				// Maximum difference in emptyIRQCount we see while waiting 4 seconds
 	uint32_t otherIRQMaxDiff;				// Maximum difference in otherIRQCount we see while waiting 4 seconds
+	volatile bool fifoIRQFiredAfterToggleWhenFull;	// True if an IRQ fired after we toggled the IRQ off and back on,
+													// even though FIFO was full and thus no conditions should
+													// have been met to cause an IRQ to fire at that time.
+													// If F29 exists, we use that for the toggle. Otherwise, VIA2.
 };
 
 static void Test_MachineInfo(void);
@@ -105,6 +109,7 @@ static void Test_VIA2Mirror(void);
 static void Test_IdleIRQWithoutF29(void);
 static void Test_IdleIRQWithF29(void);
 static void Test_FIFOIRQ(void);
+static void Test_FIFOIRQ_WhileFull(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -121,6 +126,7 @@ static ASCTestFunc tests[] =
 	Test_IdleIRQWithoutF29,
 	Test_IdleIRQWithF29,
 	Test_FIFOIRQ,
+	Test_FIFOIRQ_WhileFull,
 };
 
 static struct TestResults results;
@@ -951,6 +957,128 @@ static void Test_FIFOIRQ(void)
 	results.otherIRQMaxDiff = maxDiffOther;
 }
 
+static void Test_FIFOIRQ_WhileFullHandler(void)
+{
+	// Acknowledge the IRQ
+	via2WriteReg(0x1A03, 0x90);
+
+	// Read the status reg (in case it's needed to clear an IRQ)
+	ascReadReg(0x804);
+
+	TestResults *r = resultsFromIRQ();
+
+	// Simply flag that we saw an IRQ after toggling, and then stop further IRQs
+	r->fifoIRQFiredAfterToggleWhenFull = true;
+	via2WriteReg(0x1C13, 0x10);
+}
+
+// Tests to see if an IRQ fires immediately if we quickly enable and disable the IRQ while it's full.
+// Determines if enabling the IRQ causes it to fire immediately if no IRQ condition is active.
+// Uses F29 if it exists; otherwise uses VIA2
+static void Test_FIFOIRQ_WhileFull(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+
+	// Only use mono if stereo isn't supported by this variant
+	const bool mono = !results.shouldTestStereo;
+	const FIFOTestResults *f = mono ? &results.monoFIFO : &results.stereoFIFO;
+
+	uint16_t irqState = DisableIRQ();
+	const uint8_t originalMode = ascReadReg(0x801);
+	const uint8_t originalControl = ascReadReg(0x802);
+	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF29Value = results.regF29Exists ? ascReadReg(0xF29) : 0;
+	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
+	*(TestResults **)ApplScratch = &results;
+	via2Handlers()[4] = Test_FIFOIRQ_WhileFullHandler;
+
+	// Put in FIFO mode, mono or stereo
+	ascWriteReg(0x801, 1);
+	if (mono)
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) & ~0x02);
+	}
+	else
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) | 0x02);
+	}
+
+	// Clear any old status bits just in case
+	(void)ascReadReg(0x804);
+
+	// Keep filling the FIFO until it is full
+	for (int i = 0; i < 0x1000; i++)
+	{
+		const uint8_t nextSample = (i & 0xFF);
+		ascWriteReg(0x0, nextSample);
+		if (!mono)
+		{
+			ascWriteReg(0x400, nextSample);
+		}
+
+		uint8_t status = ascReadReg(0x804);
+		if (!results.fifoIRQTestedWasA)
+		{
+			status >>= 2;
+		}
+		status &= 0x03;
+
+		// We filled up!
+		if (status == 0x02)
+		{
+			break;
+		}
+	}
+
+	// Turn on IRQs after it's full
+	via2WriteReg(0x1C13, 0x90);
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, 0);
+	}
+	RestoreIRQ(irqState);
+
+	// Toggle the IRQ off and back on one more time
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, 1);
+		__asm__ volatile ( "nop;" );
+		ascWriteReg(0xF29, 0);
+	}
+	else
+	{
+		via2WriteReg(0x1C13, 0x10);
+		__asm__ volatile ( "nop;" );
+		via2WriteReg(0x1C13, 0x90);
+	}
+
+	// Wait a very brief moment to see if anything happens
+	__asm__ volatile ( "nop; nop; nop; nop; nop; nop;" );
+
+	// The IRQ handler will set fifoIRQFiredAfterToggleWhenFull if an IRQ occurs
+
+	irqState = DisableIRQ();
+	via2Handlers()[4] = originalASCIRQHandler;
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, originalF29Value);
+	}
+	via2WriteReg(0x1C13, irqOriginallyEnabledInVIA2 ? 0x90 : 0x10);
+	ascWriteReg(0x802, originalControl);
+	ascWriteReg(0x801, originalMode);
+	(void)ascReadReg(0x804);
+	RestoreIRQ(irqState);
+
+	// Wait a second for the FIFO to drain
+	const uint32_t startTicks = ticks();
+	while (ticks() - startTicks < 60*1)
+	{
+	}
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -1007,11 +1135,12 @@ int main(void)
 			results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
 	printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
 			results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
-	printf("(%u %u), (%u %u), (%u %u), (%u %u)\n",
+	printf("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
 			results.fullIRQCount, results.fullIRQMaxDiff,
 			results.halfEmptyIRQCount, results.halfEmptyIRQMaxDiff,
 			results.emptyIRQCount, results.emptyIRQMaxDiff,
-			results.otherIRQCount, results.otherIRQMaxDiff);
+			results.otherIRQCount, results.otherIRQMaxDiff,
+			results.fifoIRQFiredAfterToggleWhenFull);
 
 	getchar();
 }
