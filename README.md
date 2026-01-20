@@ -151,6 +151,28 @@ FIFO IRQ 1 0 0 0
 (0 0), (1 1), (0 0), (0 0), 0
 ```
 
+### Quadra 700
+
+```
+ASCTester test version 3
+BoxFlag: 16   ASC Version: $B0   System 7.6.1
+AddrMapFlags: $05A0183F
+F09: 1 ($01)  F29: 1 ($01)
+804Idle: $0F  M0: 1 M1: 1 M2: 0 ($01)
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+0 0 1 1 1 1 1 1 1 1 1 1 (1103 1103)
+VIA2 (1 $0000) 1
+Idle IRQ 0 0 0 (0), 1 0 0 (1), 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0), 0
+ASC VBL Task was located and temporarily disabled during this test.
+```
+
+Note: depending on certain factors including whether a sound has already been played by the machine, the F09 and F29 tests may print `($00)` instead of `($01)`.
+
+The special note at the bottom about the ASC VBL task indicates that ASCTester discovered a VBL task that toggles the ASC IRQ periodically, and disabled it. Apple has a special VBL task in the Sound Manager specifically targeted at the Quadra 700 and 900. It interferes with the tests, so ASCTester has to temporarily disable it in order to obtain real info about the hardware behavior.
+
 ### PowerBook Duo 210
 
 ```
@@ -186,27 +208,6 @@ Idle IRQ 0 0 0, 0 0 0, 0 0 0
 FIFO IRQ 1 0 0 0
 (1 1), (1 1), (0 0), (0 0)
 ```
-
-### Quadra 700
-
-```
-ASCTester test version 2
-BoxFlag: 16   ASC Version: $B0
-F29: 1 ($01)  804Idle: $0F  M0: 1 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-0 0 1 1 1 1 1 1 1 1 1 1
-VIA2 $0000 1
-Idle IRQ 0 0 0, 1 0 0, 1 0 0
-FIFO IRQ 1 0 0 0
-(0 0), (3 1), (237 1), (0 0)
-```
-
-Note: depending on certain factors including whether a sound has already been played by the machine, the F29 test may print `($00)` instead of `($01)`. In that case, first `Idle IRQ` triplet will likely be `1 0 0`.
-
-Slightly different results have been observed on different machines for the bottom line, but it should be something in that ballpark.
-
-This machine's behavior is different from other similar machines with the $B0 revision simply because Apple has a special VBL task in the Sound Manager specifically targeted at the Quadra 700 and 900. It interferes with the tests.
 
 ### Quadra 950
 
