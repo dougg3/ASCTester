@@ -15,7 +15,7 @@ Pre-built binaries are provided: ASCTester.dsk is an 800k disk image suitable fo
 
 ## How to use
 
-When you run this program, you should hear a quick blip or two from the speaker, followed by a delay, followed by another blip, followed by another short delay. Then a window will pop up containing test results.
+When you run this program, you should hear a a few blips from the speaker. It may take a while for the tests to complete. Don't move the mouse or press the keyboard during the tests. When it's finished, a window will pop up containing test results.
 
 Only use this on a Mac that actually has an ASC or ASC variant. Note that it's very possible this program could hang your machine, so don't have anything important going on at the same time. Ideally, run it immediately after rebooting.
 
@@ -23,9 +23,12 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
 
 - **BoxFlag** &mdash; an identifier of the Mac model
 - **ASC Version** &mdash; the value in register $800 of the ASC containing its revision
+- **System a.b.c** &mdash; the system version that the test is running, just for informational purposes
+- **AddrMapFlags** &mdash; a value showing which peripherals are marked as available by the OS
+- **F09 a (b)** &mdash; **a** is 1 if we detect that register $F09 actually accepts 1 and 0 as written values, so it probably exists. **b** is the value that register $F09 contains when we first look at it, if it exists.
 - **F29 a (b)** &mdash; **a** is 1 if we detect that register $F29 actually accepts 1 and 0 as written values, so it probably exists. **b** is the value that register $F29 contains when we first look at it, if it exists.
 - **804Idle** &mdash; the value that register $804 contains at idle while nothing sound-related is happening
-- **M0, M1, M2** &mdash; 1 if 0, 1, and 2 are accepted as writes to register $801, respectively
+- **M0, M1, M2 (a)** &mdash; 1 if 0, 1, and 2 are accepted as writes to register $801, respectively. **a** is the initial value of register $801.
 - **Mono: a b** &mdash; **a** is 1 if register $802 accepts a write of bit 2 = 0; **b** is 1 if ASCTester thinks it should actually test mono
 - **Stereo: a b** &mdash; **a** is 1 if register $802 accepts a write of bit 2 = 1; **b** is 1 if ASCTester thinks it should actually test stereo
   - (The reason we might not test based on the bit's response is because the bit lost meaning on newer ASC variants)
@@ -42,14 +45,17 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - 1 if bit 3 (full/empty B) is 0 when we first notice bit 2 (half empty B) become 1
   - 1 if bit 1 (full/empty A) is eventually recognized as 1 = empty while waiting after filling it up
   - 1 if bit 3 (full/empty B) is eventually recognized as 1 = empty while waiting after filling it up
-- **VIA2 $xxxx a** &mdash; **$xxxx** is a bitmask of which address bits from A0-A8 appear to be decoded by VIA2, inside of the first $200 bytes of space. If it's 0, it means it fully repeats inside of the first $200 bytes which likely indicates a "normal" VIA2 with a different register every $200 bytes. If it's nonzero, it's likely a pseudo-VIA that looks at a few of the lower address bits for decoding. **a** is 1 if the VIA2's address space mirroring works correctly with register $1C13 able to configure VIA2's IER regardless of whether it's actually mapped to $1C00 or $13.
+  - **(a b)** &mdash; **a** is the number of samples written before FIFO A was marked as full. **b** is the same, but for FIFO B. This is a rough idea of the size of the FIFO, but it will always report too big because it empties as it's being filled. The numbers will not be exactly the same during every test.
+- **VIA2 (a $xxxx) b** &mdash; **a** is 1 if the VIA2 readback was consistent twice in a row. **$xxxx** is a bitmask of which address bits from A0-A8 appear to be decoded by VIA2, inside of the first $200 bytes of space. If it's 0, it means it fully repeats inside of the first $200 bytes which likely indicates a "normal" VIA2 with a different register every $200 bytes. If it's nonzero, it's likely a pseudo-VIA that looks at a few of the lower address bits for decoding. **b** is 1 if the VIA2's address space mirroring works correctly with register $1C13 able to configure VIA2's IER regardless of whether it's actually mapped to $1C00 or $13.
 - **Idle IRQ** &mdash; the results of several idle IRQ tests, in order:
   - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, with register $F29 set to 1 if it exists
   - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, with register $F29 set to 1 if it exists
   - 1 if the ASC IRQ flood prevents further ASCTester app instructions from executing, with register $F29 set to 1 if it exists
+  - **(a)** indicates the number of IRQs we counted while idle with $F29 set to 1 if it exists (50000 means it flooded).
   - 1 if the ASC flags an IRQ immediately upon enabling IRQs while idle, with register $F29 set to 0 if it exists
   - 1 if the ASC floods a bunch of IRQs immediately upon enabling IRQs while idle, with register $F29 set to 0 if it exists
   - 1 if the ASC IRQ flood prevents further ASCTester app instructions from executing, with register $F29 set to 0 if it exists
+  - **(b)** indicates the number of IRQs we counted while idle with $F29 set to 0 if it exists (50000 means it flooded).
   - 1 if toggling register $F29 to 1 and back to 0 while idle causes the ASC to flag another IRQ
   - 1 if toggling register $F29 to 1 and back to 0 while idle causes the ASC to flood a bunch of IRQs
   - 1 if toggling register $F29 to 1 and back to 0 while idle causes an ASC IRQ flood that prevents further instructions from running
@@ -58,7 +64,7 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - 1 if we used FIFO A status bits for the test, 0 if we used FIFO B status bits (B is preferred unless we detect that the B bits don't work)
   - 1 if the half empty IRQ was observed immediately after we filled the FIFO up, which shouldn't happen
   - 1 if the empty IRQ was observed immediately after we filled the FIFO up, which shouldn't happen
-- **(a b), (c d), (e f), (g h)** &mdash; IRQ counts during the FIFO test, in order (over a period of 4 seconds):
+- **(a b), (c d), (e f), (g h), i** &mdash; IRQ counts during the FIFO test, in order (over a period of 4 seconds):
   - **a** is the number of FIFO full IRQs observed
   - **b** is the maximum increase in FIFO full IRQs that was observed by one loop iteration in the main program
   - **c** is the number of FIFO half empty IRQs observed
@@ -67,25 +73,102 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **f** is the maximum increase in FIFO empty IRQs that was observed by one loop iteration in the main program
   - **g** is the number of other IRQs observed
   - **h** is the maximum increase in other IRQs that was observed by one loop iteration in the main program
+  - **i** is 1 if an IRQ fired after we toggled the IRQ off and back on just after the FIFO filled up.
 
 ## Expected results gathered from working hardware
+
+Several tests are counts that display a number other than 0 or 1. **The large numbers in parentheses other than 50000 will vary between runs.** The important thing is that it's a value greater than 0 and much less than 50000.
 
 ### Mac IIci
 
 ```
-ASCTester test version 2
-BoxFlag: 5   ASC Version: $00
-F29: 0 ($00)  804Idle: $00  M0: 1 M1: 1 M2: 1
+ASCTester test version 3
+BoxFlag: 5   ASC Version: $00   System 7.1.0
+AddrMapFlags: $0000773F
+F09: 0 ($00)  F29: 0 ($00)
+804Idle: $00  M0: 1 M1: 1 M2: 1 ($00)
 Mono: 1 1 Stereo: 1 1
 Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 0 0
+0 0 1 0 1 0 1 0 1 0 0 0 (1112 0)
 Stereo FIFO Tests:
-0 0 1 1 1 1 1 1 1 1 0 0
-VIA2 $0013 1
-Idle IRQ 0 0 0, 0 0 0, 0 0 0
+0 0 1 1 1 1 1 1 1 1 0 0 (1119 1119)
+VIA2 (1 $0013) 1
+Idle IRQ 0 0 0 (0), 0 0 0 (0), 0 0 0
 FIFO IRQ 1 0 0 0
-(1 1), (1 1), (0 0), (0 0)
+(1 1), (1 1), (0 0), (0 0), 1
 ```
+
+Note: Sometimes the second pair in the bottom line is (2 1) instead of (1 1).
+
+### LC
+
+```
+ASCTester test version 3
+BoxFlag: 13   ASC Version: $E8   System 7.1.0
+AddrMapFlags: $0000773F
+F09: 0 ($00)  F29: 0 ($00)
+804Idle: $03  M0: 0 M1: 1 M2: 0 ($01)
+Mono: 1 1 Stereo: 0 0
+Mono FIFO Tests:
+0 0 1 0 1 0 1 0 1 0 1 0 (1209 0)
+VIA2 (1 $0013) 1
+Idle IRQ 1 1 1 (50000), 0 0 0 (0), 0 0 0
+FIFO IRQ 1 1 0 0
+(0 0), (574 574), (50000 50000), (0 0), 0
+```
+
+### LC III
+
+```
+ASCTester test version 3
+BoxFlag: 21   ASC Version: $BC   System 7.1.0
+AddrMapFlags: $0000773F
+F09: 1 ($01)  F29: 1 ($01)
+804Idle: $0E  M0: 0 M1: 1 M2: 0 ($01)
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1121)
+VIA2 (1 $001F) 1
+Idle IRQ 0 0 0 (0), 1 1 1 (50000), 1 1 1
+FIFO IRQ 1 0 0 0
+(0 0), (1352 1352), (50000 50000), (0 0), 0
+```
+
+### LC 475
+
+```
+ASCTester test version 3
+BoxFlag: 83   ASC Version: $BB   System 7.5.3
+AddrMapFlags: $0500183F
+F09: 1 ($01)  F29: 1 ($01)
+804Idle: $0E  M0: 1 M1: 1 M2: 0 ($01)
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1107)
+VIA2 (1 $0000) 1
+Idle IRQ 0 0 0 (0), 1 0 0 (1), 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0), 0
+```
+
+### PowerBook Duo 210
+
+```
+ASCTester test version 3
+BoxFlag: 23   ASC Version: $E9   System 7.1.1
+AddrMapFlags: $0000773F
+F09: 0 ($00)  F29: 0 ($00)
+804Idle: $03  M0: 0 M1: 1 M2: 0 ($01)
+Mono: 1 1 Stereo: 0 0
+Mono FIFO Tests:
+0 0 1 0 1 0 1 0 1 0 1 0 (1022 0)
+VIA2 (1 $00FF) 1
+Idle IRQ 1 1 1 (50000), 0 0 0 (0), 0 0 0
+FIFO IRQ 1 1 0 0
+(0 0), (1236 1236), (50000 50000), (0 0), 0
+```
+
+## Older results needing a re-test with the latest version
 
 ### Mac IIfx
 
@@ -102,55 +185,6 @@ VIA2 $000F 0
 Idle IRQ 0 0 0, 0 0 0, 0 0 0
 FIFO IRQ 1 0 0 0
 (1 1), (1 1), (0 0), (0 0)
-```
-
-### LC
-
-```
-ASCTester test version 2
-BoxFlag: 13   ASC Version: $E8
-F29: 0 ($00)  804Idle: $03  M0: 0 M1: 1 M2: 0
-Mono: 1 1 Stereo: 0 0
-Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0013 1
-Idle IRQ 1 1 1, 0 0 0, 0 0 0
-FIFO IRQ 1 1 0 0
-(0 0), (614 614), (50000 50000), (0 0)
-```
-
-Note: The 614 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
-
-### LC III
-
-```
-ASCTester test version 2
-BoxFlag: 21   ASC Version: $BC
-F29: 1 ($01)  804Idle: $0E  M0: 0 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $001F 1
-Idle IRQ 0 0 0, 1 1 1, 1 1 1
-FIFO IRQ 1 0 0 0
-(0 0), (1128 1128), (50000 50000), (0 0)
-```
-
-Note: The 1128 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
-
-### LC 475
-
-```
-ASCTester test version 2
-BoxFlag: 83   ASC Version: $BB
-F29: 1 ($01)  804Idle: $0E  M0: 1 M1: 1 M2: 0
-Mono: 1 0 Stereo: 0 1
-Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1
-VIA2 $0000 1
-Idle IRQ 0 0 0, 1 0 0, 1 0 0
-FIFO IRQ 1 0 0 0
-(0 0), (1 1), (0 0), (0 0)
 ```
 
 ### Quadra 700
@@ -221,23 +255,6 @@ FIFO IRQ 1 0 0 0
 (0 0), (1 1), (0 0), (0 0)
 ```
 
-### PowerBook Duo 210
-
-```
-ASCTester test version 2
-BoxFlag: 23   ASC Version: $E9
-F29: 0 ($00)  804Idle: $03  M0: 0 M1: 1 M2: 0
-Mono: 1 1 Stereo: 0 0
-Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $00FF 1
-Idle IRQ 1 1 1, 0 0 0, 0 0 0
-FIFO IRQ 1 1 0 0
-(0 0), (1352 1352), (50000 50000), (0 0)
-```
-
-Note: The 1352 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
-
 ### PowerBook Duo 280c
 
 ```
@@ -272,7 +289,6 @@ FIFO IRQ 1 0 0 0
 
 Note: The 4086 will likely vary on different runs. The important thing is that it's a value greater than 0 and much less than 50000.
 
-## Older results needing a re-test with the latest version
 
 ### Classic II
 
