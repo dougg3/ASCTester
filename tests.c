@@ -329,6 +329,7 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	const uint8_t originalMode = ascReadReg(0x801);
 	const uint8_t originalControl = ascReadReg(0x802);
 	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF09Value = results.regF09Exists ? ascReadReg(0xF09) : 0;
 	const uint8_t originalF29Value = results.regF29Exists ? ascReadReg(0xF29) : 0;
 
 	// Put in FIFO mode, mono or stereo
@@ -344,8 +345,12 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	// Clear the FIFO if needed
 	ascWriteReg(0x803, 0x80);
 	ascWriteReg(0x803, 0);
-	// Make sure the ASC IRQ is disabled in VIA2 and F29
+	// Make sure the ASC IRQ is disabled in VIA2 and F09/F29
 	via2WriteReg(0x1C13, 0x10);
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, 1);
+	}
 	if (results.regF29Exists)
 	{
 		ascWriteReg(0xF29, 1);
@@ -488,6 +493,10 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	}
 
 	irqState = DisableIRQ();
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, originalF09Value);
+	}
 	if (results.regF29Exists)
 	{
 		ascWriteReg(0xF29, originalF29Value);
@@ -660,10 +669,11 @@ static void Test_IdleIRQHandler(void)
 }
 
 // Tests to see if the ASC floods IRQs while idle
-static void Test_IdleIRQ(bool hasF29, bool enableF29)
+static void Test_IdleIRQ(bool hasF09, bool hasF29, bool enableF29)
 {
 	uint16_t irqState = DisableIRQ();
 	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF09Value = hasF09 ? ascReadReg(0xF09) : 0;
 	const uint8_t originalF29Value = hasF29 ? ascReadReg(0xF29) : 0;
 	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
 
@@ -672,6 +682,11 @@ static void Test_IdleIRQ(bool hasF29, bool enableF29)
 	via2Handlers()[4] = Test_IdleIRQHandler;
 	via2WriteReg(0x1C13, 0x90);
 	via2WriteReg(0x1A03, 0x90); // Acknowledge anything already waiting
+	if (hasF09)
+	{
+		// Leave F09 disabled; on newer variants it's related to recording instead of playback.
+		ascWriteReg(0xF09, 1);
+	}
 	if (hasF29)
 	{
 		ascWriteReg(0xF29, enableF29 ? 0 : 1);
@@ -767,6 +782,10 @@ static void Test_IdleIRQ(bool hasF29, bool enableF29)
 	}
 
 	via2Handlers()[4] = originalASCIRQHandler;
+	if (hasF09)
+	{
+		ascWriteReg(0xF09, originalF09Value);
+	}
 	if (hasF29)
 	{
 		ascWriteReg(0xF29, originalF29Value);
@@ -785,7 +804,7 @@ static void Test_IdleIRQ(bool hasF29, bool enableF29)
 // Tests to see if IRQs flood at idle without reg $F29
 static void Test_IdleIRQWithoutF29(void)
 {
-	Test_IdleIRQ(results.regF29Exists, false);
+	Test_IdleIRQ(results.regF09Exists, results.regF29Exists, false);
 }
 
 // Tests to see if IRQs flood at idle with reg $F29 = 0 (if it exists)
@@ -793,7 +812,7 @@ static void Test_IdleIRQWithF29(void)
 {
 	if (results.regF29Exists)
 	{
-		Test_IdleIRQ(results.regF29Exists, true);
+		Test_IdleIRQ(results.regF09Exists, results.regF29Exists, true);
 	}
 }
 
@@ -887,6 +906,7 @@ static void Test_FIFOIRQ(void)
 	const uint8_t originalMode = ascReadReg(0x801);
 	const uint8_t originalControl = ascReadReg(0x802);
 	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF09Value = results.regF09Exists ? ascReadReg(0xF09) : 0;
 	const uint8_t originalF29Value = enableF29 ? ascReadReg(0xF29) : 0;
 	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
 	*(TestResults **)ApplScratch = &results;
@@ -919,6 +939,11 @@ static void Test_FIFOIRQ(void)
 
 	// Turn on IRQs after it's more than half full
 	via2WriteReg(0x1C13, 0x90);
+	if (results.regF09Exists)
+	{
+		// Leave F09 disabled; on newer variants it's related to recording instead of playback.
+		ascWriteReg(0xF09, 1);
+	}
 	if (enableF29)
 	{
 		ascWriteReg(0xF29, 0);
@@ -1002,6 +1027,10 @@ static void Test_FIFOIRQ(void)
 
 	irqState = DisableIRQ();
 	via2Handlers()[4] = originalASCIRQHandler;
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, originalF09Value);
+	}
 	if (enableF29)
 	{
 		ascWriteReg(0xF29, originalF29Value);
@@ -1052,6 +1081,7 @@ static void Test_FIFOIRQ_WhileFull(void)
 	const uint8_t originalMode = ascReadReg(0x801);
 	const uint8_t originalControl = ascReadReg(0x802);
 	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF09Value = results.regF09Exists ? ascReadReg(0xF09) : 0;
 	const uint8_t originalF29Value = results.regF29Exists ? ascReadReg(0xF29) : 0;
 	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
 	*(TestResults **)ApplScratch = &results;
@@ -1097,6 +1127,11 @@ static void Test_FIFOIRQ_WhileFull(void)
 
 	// Turn on IRQs after it's full
 	via2WriteReg(0x1C13, 0x90);
+	if (results.regF09Exists)
+	{
+		// Leave F09 disabled; on newer variants it's related to recording instead of playback.
+		ascWriteReg(0xF09, 1);
+	}
 	if (results.regF29Exists)
 	{
 		ascWriteReg(0xF29, 0);
@@ -1124,6 +1159,10 @@ static void Test_FIFOIRQ_WhileFull(void)
 
 	irqState = DisableIRQ();
 	via2Handlers()[4] = originalASCIRQHandler;
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, originalF09Value);
+	}
 	if (results.regF29Exists)
 	{
 		ascWriteReg(0xF29, originalF29Value);
