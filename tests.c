@@ -93,6 +93,10 @@ struct TestResults
 													// even though FIFO was full and thus no conditions should
 													// have been met to cause an IRQ to fire at that time.
 													// If F29 exists, we use that for the toggle. Otherwise, VIA2.
+	volatile uint32_t fifoIRQTime[12];		// The time of the first 12 detected FIFO IRQs
+	volatile uint8_t fifoIRQValues[12];		// The status value read from reg 0x804 for the first 12 detected FIFO IRQs
+	volatile uint32_t fifoIRQCount;			// The number of FIFO IRQs detected
+	volatile uint32_t fifoIRQEnableTime;	// The time when we enabled FIFO IRQs
 };
 
 static void DisableASCVBLTask(void);
@@ -825,8 +829,21 @@ static void Test_FIFOIRQHandler(void)
 	// Read the status reg
 	uint8_t status = ascReadReg(0x804);
 
-	// Shift it over if we're looking at FIFO B
+	// Track at what time it happened. Not super high precision, but whatever.
+	const uint32_t time = ticks();
+
 	TestResults *r = resultsFromIRQ();
+
+	// Save raw info about the first 12 IRQs detected
+	uint32_t count = r->fifoIRQCount;
+	if (count < 12)
+	{
+		r->fifoIRQValues[count] = status;
+		r->fifoIRQTime[count] = time;
+	}
+	r->fifoIRQCount = count + 1;
+
+	// Shift it over if we're looking at FIFO B
 	if (!r->fifoIRQTestedWasA)
 	{
 		status >>= 2;
@@ -949,6 +966,7 @@ static void Test_FIFOIRQ(void)
 		ascWriteReg(0xF29, 0);
 	}
 	RestoreIRQ(irqState);
+	results.fifoIRQEnableTime = ticks();
 
 	// Keep filling the FIFO for a while, let's see if we ever get an IRQ
 	for (int i = 0; i < 0x1000; i++)
@@ -1259,6 +1277,16 @@ int main(void)
 		{
 			printf("ASC VBL Task was located and temporarily disabled during this test.\n");
 		}
+
+		printf("%d IRQs (start time = %u):\n", results.fifoIRQCount, results.fifoIRQEnableTime);
+		for (int i = 0; i < results.fifoIRQCount && i < 12; i++)
+		{
+			printf("%s$%02X at t = %5u",
+					i > 0 ? (i & 3 ? ", " : ",\n") : "",
+					results.fifoIRQValues[i],
+					results.fifoIRQTime[i] & 0xFFFF);
+		}
+		printf("%s\n", results.fifoIRQCount > 12 ? ", ..." : "");
 	}
 	else
 	{
