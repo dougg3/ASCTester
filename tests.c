@@ -370,10 +370,13 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 	for (int i = 0; i < 0x100; i++)
 	{
 		const uint8_t nextSample = (i & 0xFF);
-		ascWriteReg(0x0, nextSample);
-		if (!mono)
+		if (mono)
 		{
-			ascWriteReg(0x400, nextSample);
+			ascWriteReg(0x0, nextSample);
+		}
+		else
+		{
+			ascWriteStereoSample(nextSample);
 		}
 	}
 
@@ -390,10 +393,13 @@ static void Test_FIFOFullHalfFullEmpty(bool mono, FIFOTestResults *f)
 		for (int i = 0; i < 0x1000; i++)
 		{
 			const uint8_t nextSample = (i & 0xFF);
-			ascWriteReg(0x0, nextSample);
-			if (!mono)
+			if (mono)
 			{
-				ascWriteReg(0x400, nextSample);
+				ascWriteReg(0x0, nextSample);
+			}
+			else
+			{
+				ascWriteStereoSample(nextSample);
 			}
 			const uint8_t irqState = ascReadReg(0x804);
 			if ((irqState & 0x02) && !f->aReachesFull)
@@ -947,10 +953,13 @@ static void Test_FIFOIRQ(void)
 	for (int i = 0; i < 0x300; i++)
 	{
 		const uint8_t nextSample = (i & 0xFF);
-		ascWriteReg(0x0, nextSample);
-		if (!mono)
+		if (mono)
 		{
-			ascWriteReg(0x400, nextSample);
+			ascWriteReg(0x0, nextSample);
+		}
+		else
+		{
+			ascWriteStereoSample(nextSample);
 		}
 	}
 
@@ -972,10 +981,13 @@ static void Test_FIFOIRQ(void)
 	for (int i = 0; i < 0x1000; i++)
 	{
 		const uint8_t nextSample = (i & 0xFF);
-		ascWriteReg(0x0, nextSample);
-		if (!mono)
+		if (mono)
 		{
-			ascWriteReg(0x400, nextSample);
+			ascWriteReg(0x0, nextSample);
+		}
+		else
+		{
+			ascWriteStereoSample(nextSample);
 		}
 
 		// The handler will tell us if the FIFO is full, unless the ASC doesn't
@@ -1123,10 +1135,13 @@ static void Test_FIFOIRQ_WhileFull(void)
 	for (int i = 0; i < 0x1000; i++)
 	{
 		const uint8_t nextSample = (i & 0xFF);
-		ascWriteReg(0x0, nextSample);
-		if (!mono)
+		if (mono)
 		{
-			ascWriteReg(0x400, nextSample);
+			ascWriteReg(0x0, nextSample);
+		}
+		else
+		{
+			ascWriteStereoSample(nextSample);
 		}
 
 		uint8_t status = ascReadReg(0x804);
