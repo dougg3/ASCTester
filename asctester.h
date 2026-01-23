@@ -14,25 +14,25 @@ typedef void (*VIA2Handler)(void);
 // Reads an ASC register
 static inline uint8_t ascReadReg(uint16_t offset)
 {
-	return *((*(volatile uint8_t **)ASCBase) + offset);
+	return *((volatile uint8_t *)((*(uint8_t **)ASCBase) + offset));
 }
 
 // Writes an ASC register
 static inline void ascWriteReg(uint16_t offset, uint8_t value)
 {
-	*((*(volatile uint8_t **)ASCBase) + offset) = value;
+	*((volatile uint8_t *)((*(uint8_t **)ASCBase) + offset)) = value;
 }
 
 // Reads a VIA2 register
 static inline uint8_t via2ReadReg(uint16_t offset)
 {
-	return *((*(volatile uint8_t **)VIA2Base) + offset);
+	return *((volatile uint8_t *)((*(uint8_t **)VIA2Base) + offset));
 }
 
 // Writes a VIA2 register
 static inline void via2WriteReg(uint16_t offset, uint8_t value)
 {
-	*((*(volatile uint8_t **)VIA2Base) + offset) = value;
+	*((volatile uint8_t *)((*(uint8_t **)VIA2Base) + offset)) = value;
 }
 
 // The VIA2 dispatch table
