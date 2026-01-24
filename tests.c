@@ -792,11 +792,11 @@ static void Test_IdleIRQ(bool hasF09, bool hasF29, bool enableF29)
 	}
 	if (irqOriginallyEnabledInVIA2)
 	{
-		ascWriteReg(0x1C13, 0x90);
+		via2WriteReg(0x1C13, 0x90);
 	}
 	else
 	{
-		ascWriteReg(0x1C13, 0x10);
+		via2WriteReg(0x1C13, 0x10);
 	}
 	RestoreIRQ(irqState);
 }
