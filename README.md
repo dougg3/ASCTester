@@ -91,74 +91,92 @@ Several tests are counts that display a number other than 0 or 1. **The large nu
 ### Mac IIci
 
 ```
-ASCTester test version 3
+ASCTester test version 4
 BoxFlag: 5   ASC Version: $00   System 7.1.0
 AddrMapFlags: $0000773F
 F09: 0 ($00)  F29: 0 ($00)
 804Idle: $00  M0: 1 M1: 1 M2: 1 ($00)
 Mono: 1 1 Stereo: 1 1
 Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 0 0 (1112 0)
+0 0 1 0 1 0 1 0 1 0 0 0 (1105 0)
 Stereo FIFO Tests:
-0 0 1 1 1 1 1 1 1 1 0 0 (1119 1119)
+0 0 1 1 1 1 1 1 1 1 0 0 (1116 1116)
 VIA2 (1 $0013) 1
 Idle IRQ 0 0 0 (0), 0 0 0 (0), 0 0 0
 FIFO IRQ 1 0 0 0
 (1 1), (1 1), (0 0), (0 0), 1
+2 IRQs (start time = 2756):
+$0A at t =  2756, $05 at t =  2757
+Cancel 1 0 1 0 0 $0F 0
 ```
 
-Note: Sometimes the second pair in the bottom line is (2 1) instead of (1 1).
+Note: Sometimes the second pair underneath FIFO IRQ is (2 1) instead of (1 1).
 
 ### LC
 
 ```
-ASCTester test version 3
+ASCTester test version 4
 BoxFlag: 13   ASC Version: $E8   System 7.1.0
 AddrMapFlags: $0000773F
 F09: 0 ($00)  F29: 0 ($00)
 804Idle: $03  M0: 0 M1: 1 M2: 0 ($01)
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 1 0 (1209 0)
+0 0 1 0 1 0 1 0 1 0 1 0 (1190 0)
 VIA2 (1 $0013) 1
 Idle IRQ 1 1 1 (50000), 0 0 0 (0), 0 0 0
 FIFO IRQ 1 1 0 0
-(0 0), (574 574), (50000 50000), (0 0), 0
+(0 0), (528 528), (50000 50000), (0 0), 0
+50528 IRQs (start time = 2497):
+$01 at t =  2499, $01 at t =  2499, $01 at 4 =  2499, $01 at t =  2499,
+$01 at t =  2499, $01 at t =  2499, $01 at 4 =  2499, $01 at t =  2499,
+$01 at t =  2499, $01 at t =  2499, $01 at 4 =  2499, $01 at t =  2499, ...
+Cancel 0 0 0 0 0 $00 0
 ```
 
 ### LC III
 
 ```
-ASCTester test version 3
+ASCTester test version 4
 BoxFlag: 21   ASC Version: $BC   System 7.1.0
 AddrMapFlags: $0000773F
 F09: 1 ($01)  F29: 1 ($01)
 804Idle: $0E  M0: 0 M1: 1 M2: 0 ($01)
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1 (0 1121)
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1136)
 VIA2 (1 $001F) 1
 Idle IRQ 0 0 0 (0), 1 1 1 (50000), 1 1 1
 FIFO IRQ 1 0 0 0
-(0 0), (1352 1352), (50000 50000), (0 0), 0
+(0 0), (1199 1199), (50000 50000), (0 0), 0
+51199 IRQs (start time = 4577):
+$06 at t =  4579, $06 at t =  4579, $06 at t =  4579, $06 at t =  4579,
+$06 at t =  4579, $06 at t =  4579, $06 at t =  4579, $06 at t =  4579,
+$06 at t =  4579, $06 at t =  4579, $06 at t =  4579, $06 at t =  4579, ...
+Cancel 0 0 0 0 0 $00 0
 ```
 
 ### LC 475
 
 ```
-ASCTester test version 3
+ASCTester test version 4
 BoxFlag: 83   ASC Version: $BB   System 7.5.3
 AddrMapFlags: $0500183F
 F09: 1 ($01)  F29: 1 ($01)
 804Idle: $0E  M0: 1 M1: 1 M2: 0 ($01)
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1 (0 1107)
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1104)
 VIA2 (1 $0000) 1
 Idle IRQ 0 0 0 (0), 1 0 0 (1), 1 0 0
 FIFO IRQ 1 0 0 0
 (0 0), (1 1), (0 0), (0 0), 0
+1 IRQs (start time = 2614):
+$06 at t =  2615
+Cancel 1 0 1 0 0 $0E 0
 ```
+
+## Older results needing a re-test with the latest version
 
 ### Quadra 700
 
@@ -198,8 +216,6 @@ Idle IRQ 1 1 1 (50000), 0 0 0 (0), 0 0 0
 FIFO IRQ 1 1 0 0
 (0 0), (1236 1236), (50000 50000), (0 0), 0
 ```
-
-## Older results needing a re-test with the latest version
 
 ### Mac IIfx
 
