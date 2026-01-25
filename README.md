@@ -73,7 +73,16 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **f** is the maximum increase in FIFO empty IRQs that was observed by one loop iteration in the main program
   - **g** is the number of other IRQs observed
   - **h** is the maximum increase in other IRQs that was observed by one loop iteration in the main program
-  - **i** is 1 if an IRQ fired after we toggled the IRQ off and back on just after the FIFO filled up.
+  - **i** is 1 if an IRQ fired after we toggled the IRQ off and back on just after the FIFO filled up
+- **a IRQs (start time = b)** &mdash; detailed info about the IRQs that occurred during the FIFO IRQ test, and when. Limited to displaying info about the first 12 IRQs. **The displayed times will vary between runs. This is for diagnostics only.**
+- **Cancel a b c d e f g** &mdash; test results from the IRQ cancel test:
+  - **a** is 1 if the cancel test was performed. It's skipped if the FIFO IRQ wasn't tested, or if there was an IRQ flood
+  - **b** is 1 if an ASC IRQ was initially signaled in VIA2's IFR before any samples were written to the chip
+  - **c** is 1 if an ASC IRQ was signaled in the VIA2's IFR after writing a bunch of samples to the chip
+  - **d** is 1 if an ASC IRQ was still signaled in the VIA2's IFR after attempting to clear it
+  - **e** is 1 if an ASC IRQ was still signaled in the VIA2's IFR after interrupts were enabled
+  - **f** is the value that was observed in ASC register $804 after the test finished
+  - **g** is the total count of IRQs observed after enabling interrupts during the cancel test
 
 ## Expected results gathered from working hardware
 
