@@ -1403,7 +1403,7 @@ int main(void)
 		DoTests();
 	}
 
-	printf("ASCTester test version 3\n");
+	printf("ASCTester test version 4\n");
 
 	if (ascExists && (via2Exists || rbvExists))
 	{
