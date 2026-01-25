@@ -97,6 +97,13 @@ struct TestResults
 	volatile uint8_t fifoIRQValues[12];		// The status value read from reg 0x804 for the first 12 detected FIFO IRQs
 	volatile uint32_t fifoIRQCount;			// The number of FIFO IRQs detected
 	volatile uint32_t fifoIRQEnableTime;	// The time when we enabled FIFO IRQs
+	bool testedCancelIRQ;					// True if we ran the cancel IRQ test (we don't do this if it floods IRQs)
+	bool cancelIRQInitial;					// True if we saw an IRQ flagged in VIA2 in cancel test before writing any samples
+	bool cancelIRQAfterFill;				// True if we saw an IRQ flagged in VIA2 after filling samples, before enabling IRQs
+	bool cancelIRQAfterAck;					// True if an IRQ was still flagged in VIA2 after we acknowledged it, before enabling IRQs
+	bool cancelIRQAfterWait;				// True if an IRQ was still flagged in VIA2 after we enabled IRQs and waited 10 seconds
+	uint8_t cancelIRQFinalStatus;			// Final status read from reg 0x804 after the cancel test
+	volatile uint32_t cancelIRQCount;		// Count of IRQs we observed during the cancel test
 };
 
 static void DisableASCVBLTask(void);
@@ -118,6 +125,8 @@ static void Test_IdleIRQWithF29(void);
 static void Test_FIFOIRQ(void);
 static void Test_FIFOIRQ_WhileFull(void);
 
+static void Test_CancelIRQ(void);
+
 // List of all tests
 static ASCTestFunc tests[] =
 {
@@ -135,6 +144,7 @@ static ASCTestFunc tests[] =
 	Test_IdleIRQWithF29,
 	Test_FIFOIRQ,
 	Test_FIFOIRQ_WhileFull,
+	Test_CancelIRQ,
 	RestoreASCVBLTask,
 };
 
@@ -1213,6 +1223,150 @@ static void Test_FIFOIRQ_WhileFull(void)
 	}
 }
 
+static void Test_CancelIRQHandler(void)
+{
+	// Acknowledge the IRQ
+	via2WriteReg(0x1A03, 0x90);
+
+	TestResults *r = resultsFromIRQ();
+	r->cancelIRQCount++;
+
+	// Prevent IRQ floods
+	if (r->cancelIRQCount >= IRQ_FLOOD_TEST_COUNT)
+	{
+		via2WriteReg(0x1C13, 0x10);
+	}
+}
+
+// Tests to see if we can cancel an IRQ by clearing it in VIA2
+static void Test_CancelIRQ(void)
+{
+	// Don't bother with this test if the IRQ floods when the condition is active
+	// (or if we didn't test the FIFO IRQs at all)
+	if (results.fifoIRQCount >= IRQ_FLOOD_TEST_COUNT ||
+		!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedCancelIRQ = true;
+
+	// Only use mono if stereo isn't supported by this variant
+	const bool mono = !results.shouldTestStereo;
+	const bool enableF29 = results.regF29Exists;
+
+	uint16_t irqState = DisableIRQ();
+	const uint8_t originalMode = ascReadReg(0x801);
+	const uint8_t originalControl = ascReadReg(0x802);
+	const bool irqOriginallyEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	const uint8_t originalF09Value = results.regF09Exists ? ascReadReg(0xF09) : 0;
+	const uint8_t originalF29Value = enableF29 ? ascReadReg(0xF29) : 0;
+	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
+	*(TestResults **)ApplScratch = &results;
+	via2Handlers()[4] = Test_CancelIRQHandler;
+
+	// Put in FIFO mode, mono or stereo
+	ascWriteReg(0x801, 1);
+	if (mono)
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) & ~0x02);
+	}
+	else
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) | 0x02);
+	}
+
+	// Clear any old status bits just in case
+	(void)ascReadReg(0x804);
+
+	// Enable F29 interrupts if F29 exists
+	if (results.regF09Exists)
+	{
+		// Leave F09 disabled; on newer variants it's related to recording instead of playback.
+		ascWriteReg(0xF09, 1);
+	}
+	if (enableF29)
+	{
+		ascWriteReg(0xF29, 0);
+	}
+	// Make sure ASC IRQs are off in VIA2
+	via2WriteReg(0x1C13, 0x10);
+	via2WriteReg(0x1A03, 0x90);
+	const uint8_t origifr = via2ReadReg(0x1A03);
+
+	// Now enable actual IRQs so that ticks work
+	RestoreIRQ(irqState);
+
+	// Keep filling the FIFO until it is full
+	for (int i = 0; i < 0x1000; i++)
+	{
+		const uint8_t nextSample = (i & 0xFF);
+		ascWriteStereoSample(nextSample);
+	}
+
+	// Wait 1 second
+	uint32_t startTicks = ticks();
+	while (ticks() - startTicks < 60*1)
+	{
+	}
+
+	// See if an IRQ is flagged in VIA2
+	const uint8_t ifrAfterFill = via2ReadReg(0x1A03);
+	// And acknowledge it
+	via2WriteReg(0x1A03, 0x90);
+	const uint8_t ifrAfterAck = via2ReadReg(0x1A03);
+
+	// Wait 1 second
+	startTicks = ticks();
+	while (ticks() - startTicks < 60*1)
+	{
+	}
+
+	// Now allow interrupts from VIA2. Let's see if the IRQ fires
+	via2WriteReg(0x1C13, 0x90);
+
+	// Wait 1 second
+	startTicks = ticks();
+	while (ticks() - startTicks < 60*1)
+	{
+	}
+
+	// Sample the IRQ afterward
+	const uint8_t ifrAfterWait = via2ReadReg(0x1A03);
+
+	// Wait 1 second
+	startTicks = ticks();
+	while (ticks() - startTicks < 60*1)
+	{
+	}
+
+	// Then read the status register after all that
+	const uint8_t finalStatus = ascReadReg(0x804);
+
+	// Now restore things the way they were
+	irqState = DisableIRQ();
+	via2Handlers()[4] = originalASCIRQHandler;
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, originalF09Value);
+	}
+	if (enableF29)
+	{
+		ascWriteReg(0xF29, originalF29Value);
+	}
+	via2WriteReg(0x1C13, irqOriginallyEnabledInVIA2 ? 0x90 : 0x10);
+	ascWriteReg(0x802, originalControl);
+	ascWriteReg(0x801, originalMode);
+	(void)ascReadReg(0x804);
+	RestoreIRQ(irqState);
+
+	// Save info we observed
+	results.cancelIRQInitial = origifr & 0x10;
+	results.cancelIRQAfterFill = ifrAfterFill & 0x10;
+	results.cancelIRQAfterAck = ifrAfterAck & 0x10;
+	results.cancelIRQAfterWait = ifrAfterWait & 0x10;
+	results.cancelIRQFinalStatus = finalStatus;
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -1302,6 +1456,9 @@ int main(void)
 					results.fifoIRQTime[i] & 0xFFFF);
 		}
 		printf("%s\n", results.fifoIRQCount > 12 ? ", ..." : "");
+		printf("Cancel %d %d %d %d %d $%02X %u\n", results.testedCancelIRQ, results.cancelIRQInitial,
+				results.cancelIRQAfterFill, results.cancelIRQAfterAck, results.cancelIRQAfterWait,
+				results.cancelIRQFinalStatus, results.cancelIRQCount);
 	}
 	else
 	{
