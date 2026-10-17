@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <Gestalt.h>
@@ -58,6 +59,11 @@ struct StatusWriteResult
 	uint8_t readbackAgain;					// Second read of $804 after the write
 	bool irqAfterRead;						// The VIA2 flag came back after clearing it, after reading $804
 };
+
+// Number of trials and sample counts for the half empty threshold test
+#define THRESHOLD_TRIALS					16
+#define THRESHOLD_FILL						0x300
+#define THRESHOLD_REFILL					0x100
 
 // Test results
 struct TestResults
@@ -152,6 +158,20 @@ struct TestResults
 	uint16_t lineSecondTime;				// When the second flag appeared, in VIA ticks after clearing the first one
 	uint8_t lineStatus;						// $804 read after waiting for the second flag
 	bool lineIRQAfterRead;					// The VIA2 flag came back after clearing it, after reading $804
+	bool testedThreshold;					// True if we ran the half empty threshold test
+	uint8_t thresholdFailures;				// Number of trials where a flag never showed up in time
+	uint16_t thresholdFirstMin;				// Shortest time from the first write into an empty FIFO to the half empty flag
+	uint16_t thresholdFirstMax;				// Longest time from the first write into an empty FIFO to the half empty flag
+	uint16_t thresholdRefillMin;			// Shortest time between the two half empty flags around a refill
+	uint16_t thresholdRefillMax;			// Longest time between the two half empty flags around a refill
+	uint32_t thresholdRefillSum;			// Sum of the times between the two half empty flags
+	uint16_t thresholdFirstAvg;				// Average time from the first write into an empty FIFO to the half empty flag
+	uint16_t thresholdRefillAvg;			// Average time between the two half empty flags (THRESHOLD_REFILL sample periods)
+	uint16_t fullWritesMin;					// Fewest writes into an empty FIFO before the full flag
+	uint16_t fullWritesMax;					// Most writes into an empty FIFO before the full flag
+	int32_t fullLevelMin;					// Lowest estimated FIFO level at the full flag, in 1/100 samples
+	int32_t fullLevelMax;					// Highest estimated FIFO level at the full flag, in 1/100 samples
+	int32_t fullLevelAvg;					// Average estimated FIFO level at the full flag, in 1/100 samples
 };
 
 static void DisableASCVBLTask(void);
@@ -179,6 +199,7 @@ static void Test_TimerAvailable(void);
 static void Test_StatusWrite(void);
 static void Test_MaskedLatch(void);
 static void Test_IRQLineType(void);
+static void Test_HalfEmptyThreshold(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -202,6 +223,7 @@ static ASCTestFunc tests[] =
 	Test_StatusWrite,
 	Test_MaskedLatch,
 	Test_IRQLineType,
+	Test_HalfEmptyThreshold,
 	RestoreASCVBLTask,
 };
 
@@ -1447,6 +1469,16 @@ static void writeSample(bool mono, uint8_t sample)
 	}
 }
 
+// Returns the half empty (bit 0) and full/empty (bit 1) status of the FIFO the IRQ tests use
+static uint8_t fifoStatus(uint8_t status)
+{
+	if (!results.fifoIRQTestedWasA)
+	{
+		status >>= 2;
+	}
+	return status & 0x03;
+}
+
 // Clears the ASC flag in VIA2's IFR
 static void clearVIA2IRQ(void)
 {
@@ -1752,6 +1784,189 @@ static void Test_IRQLineType(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Waits a little longer for each trial, so that the trials start at different points
+// of the ASC's sample period (about 1.3 us per VIA access, 45 us per sample)
+static void PhaseDelay(int trial)
+{
+	for (int i = 0; i < trial * 3; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+}
+
+// Polls $804 until the half empty bit is clear and then set again. Returns the
+// VIA tick count at that point, or $FFFF if it doesn't happen.
+static uint16_t WaitHalfEmpty(void)
+{
+	bool sawAboveHalf = false;
+
+	for (uint32_t i = 0; i < 200000; i++)
+	{
+		const uint8_t status = fifoStatus(ascReadReg(0x804));
+		if (!(status & 0x01))
+		{
+			sawAboveHalf = true;
+		}
+		else if (sawAboveHalf)
+		{
+			return timerElapsed();
+		}
+	}
+	return 0xFFFF;
+}
+
+// Measures where the half empty condition happens, using VIA1 timer 2 as a stopwatch:
+// - THRESHOLD_FILL samples written into an empty FIFO, time from the first write to the
+//   half empty flag. The FIFO drains one sample per sample period from the first write,
+//   so this is (THRESHOLD_FILL - level after the half empty condition) sample periods,
+//   minus up to one period for where the first write fell within a sample period.
+// - THRESHOLD_REFILL samples written right after that, time to the next half empty flag.
+//   That is exactly THRESHOLD_REFILL sample periods, which calibrates the period.
+// - Writes into an empty FIFO until the full flag, with the time it took, to estimate the
+//   FIFO level when the full flag sets.
+static void Test_HalfEmptyThreshold(void)
+{
+	if (!results.testedFIFOIRQs || !results.timerAvailable)
+	{
+		return;
+	}
+	results.testedThreshold = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	results.thresholdFirstMin = 0xFFFF;
+	results.thresholdRefillMin = 0xFFFF;
+	results.fullWritesMin = 0xFFFF;
+	uint32_t firstSum = 0;
+	uint32_t refillTrials = 0;
+
+	for (int trial = 0; trial < THRESHOLD_TRIALS; trial++)
+	{
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		(void)ascReadReg(0x804);
+		PhaseDelay(trial);
+		timerStart();
+		for (int i = 0; i < THRESHOLD_FILL; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		const uint16_t first = WaitHalfEmpty();
+		for (int i = 0; i < THRESHOLD_REFILL; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		const uint16_t second = (first == 0xFFFF) ? 0xFFFF : WaitHalfEmpty();
+		ReturnTimer();
+		RestoreIRQ(irqState);
+
+		if (second == 0xFFFF)
+		{
+			results.thresholdFailures++;
+			continue;
+		}
+
+		const uint16_t refill = second - first;
+		if (first < results.thresholdFirstMin)
+		{
+			results.thresholdFirstMin = first;
+		}
+		if (first > results.thresholdFirstMax)
+		{
+			results.thresholdFirstMax = first;
+		}
+		if (refill < results.thresholdRefillMin)
+		{
+			results.thresholdRefillMin = refill;
+		}
+		if (refill > results.thresholdRefillMax)
+		{
+			results.thresholdRefillMax = refill;
+		}
+		firstSum += first;
+		results.thresholdRefillSum += refill;
+		refillTrials++;
+	}
+
+	if (refillTrials == 0)
+	{
+		FinishIRQLineTest(&saved);
+		return;
+	}
+	results.thresholdFirstAvg = firstSum / refillTrials;
+	results.thresholdRefillAvg = results.thresholdRefillSum / refillTrials;
+
+	// VIA ticks per THRESHOLD_REFILL sample periods
+	const int32_t refillTicks = results.thresholdRefillAvg;
+
+	results.fullLevelMin = INT32_MAX;
+	results.fullLevelMax = INT32_MIN;
+	int32_t levelSum = 0;
+	uint32_t fullTrials = 0;
+
+	for (int trial = 0; trial < THRESHOLD_TRIALS; trial++)
+	{
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		(void)ascReadReg(0x804);
+		PhaseDelay(trial);
+		timerStart();
+		uint16_t writes;
+		bool full = false;
+		for (writes = 1; writes <= 0x800; writes++)
+		{
+			writeSample(mono, writes & 0xFF);
+			if (fifoStatus(ascReadReg(0x804)) & 0x02)
+			{
+				full = true;
+				break;
+			}
+		}
+		const uint16_t elapsed = timerElapsed();
+		ReturnTimer();
+		RestoreIRQ(irqState);
+
+		if (!full)
+		{
+			results.thresholdFailures++;
+			continue;
+		}
+
+		const int32_t level = writes * 100 -
+			(int32_t)elapsed * THRESHOLD_REFILL * 100 / refillTicks;
+		if (writes < results.fullWritesMin)
+		{
+			results.fullWritesMin = writes;
+		}
+		if (writes > results.fullWritesMax)
+		{
+			results.fullWritesMax = writes;
+		}
+		if (level < results.fullLevelMin)
+		{
+			results.fullLevelMin = level;
+		}
+		if (level > results.fullLevelMax)
+		{
+			results.fullLevelMax = level;
+		}
+		levelSum += level;
+		fullTrials++;
+	}
+	if (fullTrials)
+	{
+		results.fullLevelAvg = levelSum / (int32_t)fullTrials;
+	}
+
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -1941,6 +2156,25 @@ int main(void)
 				results.lineIdleIRQ, results.lineFullIRQ, results.lineIRQAfterClear,
 				results.lineSecondIRQ, results.lineSecondTime, results.lineStatus,
 				results.lineIRQAfterRead);
+		out("Threshold %d (%u): %u %u %u, refill %u %u %u\n", results.testedThreshold,
+				results.thresholdFailures,
+				results.thresholdFirstMin, results.thresholdFirstAvg, results.thresholdFirstMax,
+				results.thresholdRefillMin, results.thresholdRefillAvg, results.thresholdRefillMax);
+		if (results.thresholdRefillAvg)
+		{
+			const int32_t r = results.thresholdRefillAvg;
+			const long toHalfMin = (long)results.thresholdFirstMin * THRESHOLD_REFILL * 100 / r;
+			const long toHalfAvg = (long)results.thresholdFirstAvg * THRESHOLD_REFILL * 100 / r;
+			const long toHalfMax = (long)results.thresholdFirstMax * THRESHOLD_REFILL * 100 / r;
+			out("Samples to half: %ld.%02ld %ld.%02ld %ld.%02ld\n",
+					toHalfMin / 100, toHalfMin % 100, toHalfAvg / 100, toHalfAvg % 100,
+					toHalfMax / 100, toHalfMax % 100);
+			out("Full: writes %u %u, level %ld.%02ld %ld.%02ld %ld.%02ld\n",
+					results.fullWritesMin, results.fullWritesMax,
+					(long)results.fullLevelMin / 100, (long)results.fullLevelMin % 100,
+					(long)results.fullLevelAvg / 100, (long)results.fullLevelAvg % 100,
+					(long)results.fullLevelMax / 100, (long)results.fullLevelMax % 100);
+		}
 	}
 	else
 	{

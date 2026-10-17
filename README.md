@@ -109,6 +109,12 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **t** is when that happened, in VIA ticks after clearing the flag (about 61440 means it didn't happen within about 80 ms)
   - **$xx** is $804 read after that
   - **f** is 1 if the flag came back after clearing it, after reading $804
+- **Threshold a (b): c d e, refill f g h** &mdash; measures the FIFO level at which the half empty condition happens, with VIA1 timer 2 (783.36 kHz on most models). Each of 16 trials writes 768 samples into an empty FIFO as fast as possible, waits for the half empty bit, writes 256 more samples and waits for the half empty bit again. Each trial starts at a slightly different point of the sample period.
+  - **a** is 1 if the test was performed, **b** is the number of trials where a flag never showed up
+  - **c d e** are the shortest, average and longest times in VIA ticks from the first write to the first half empty flag
+  - **f g h** are the same for the time between the two half empty flags, which is exactly 256 sample periods: 256 &times; 35.2 = 9011 ticks at 22257 Hz
+- **Samples to half: a b c** &mdash; the shortest, average and longest times from the first write to the half empty flag, in sample periods (calibrated with the refill time above). The FIFO loses one sample per period from the first write, so if the half empty condition happens when the level goes from N to N-1, this is 768 - (N - 1) periods minus up to one period, plus a small polling delay. Rounding the shortest value up gives 768 - (N - 1): 257 means the condition is on 512 to 511, 258 means 511 to 510.
+- **Full: writes a b, level c d e** &mdash; 16 trials writing into an empty FIFO until the full bit sets: **a** and **b** are the fewest and most writes, **c d e** the lowest, average and highest FIFO level at that point (writes minus the samples played meanwhile, from the time it took). Each trial is off by up to one sample either way; the average is the FIFO level at which the full bit sets, minus a small polling delay (about 0.2 to 0.5).
 
 All the results are also saved to a text file named "ASCTester Results" next to the application.
 
