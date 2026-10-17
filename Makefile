@@ -2,6 +2,12 @@ CC=$(RETRO68)/bin/m68k-apple-macos-g++
 REZ=$(RETRO68)/bin/Rez
 CFLAGS=-Os
 LDFLAGS=-lRetroConsole
+
+# Shows the results in a plain window instead of RetroConsole
+ifdef SIMPLE_CONSOLE
+CFLAGS+=-DSIMPLE_CONSOLE
+LDFLAGS=
+endif
 RINCLUDES=$(RETRO68)/m68k-apple-macos/RIncludes
 REZFLAGS=-I$(RINCLUDES)
 

@@ -86,6 +86,8 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
 
 All the results are also saved to a text file named "ASCTester Results" next to the application.
 
+Recent versions of Retro68's RetroConsole link in most of libstdc++'s iostreams and locale support, which makes the application about 1.2M, more than the 1M partition Retro68's default SIZE resource asks for: under System 7 it then fails to load its code and stops with an "unimplemented trap" system error. `make SIMPLE_CONSOLE=1` builds a version without RetroConsole (about 70K) that shows the results in a plain window instead; click to quit.
+
 ## Expected results gathered from working hardware
 
 Several tests are counts that display a number other than 0 or 1. **The large numbers in parentheses other than 50000 will vary between runs.** The important thing is that it's a value greater than 0 and much less than 50000.

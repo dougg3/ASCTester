@@ -6,6 +6,14 @@
 #include <string.h>
 #include <Gestalt.h>
 #include <Files.h>
+#ifdef SIMPLE_CONSOLE
+#include <Quickdraw.h>
+#include <Fonts.h>
+#include <Windows.h>
+#include <Events.h>
+
+QDGlobals qd;
+#endif
 #include "asctester.h"
 
 // How many IRQs we receive before we consider it "flooding"
@@ -1392,12 +1400,51 @@ static void out(const char *format, ...)
 	vsnprintf(line, sizeof(line), format, args);
 	va_end(args);
 
+#ifndef SIMPLE_CONSOLE
 	fputs(line, stdout);
+#endif
 	for (const char *c = line; *c && outLength < sizeof(outText); c++)
 	{
 		outText[outLength++] = (*c == '\n') ? '\r' : *c;
 	}
 }
+
+#ifdef SIMPLE_CONSOLE
+// Shows everything printed in a window, for toolchains where RetroConsole doesn't work.
+// Waits for a click.
+static void ShowResults(void)
+{
+	InitGraf(&qd.thePort);
+	InitFonts();
+	InitWindows();
+	InitCursor();
+
+	Rect bounds = qd.screenBits.bounds;
+	InsetRect(&bounds, 8, 8);
+	bounds.top += 32;
+	WindowPtr window = NewWindow(NULL, &bounds, "\pASCTester", true, documentProc, (WindowPtr)-1, false, 0);
+	SetPort(window);
+	TextFont(kFontIDMonaco);
+	TextSize(9);
+
+	short y = 12;
+	size_t start = 0;
+	for (size_t i = 0; i <= outLength; i++)
+	{
+		if (i == outLength || outText[i] == '\r')
+		{
+			MoveTo(4, y);
+			DrawText(outText, start, i - start);
+			y += 11;
+			start = i + 1;
+		}
+	}
+
+	while (!Button())
+	{
+	}
+}
+#endif
 
 // Saves everything printed to "ASCTester Results" next to the application
 static void SaveResults(void)
@@ -1514,5 +1561,9 @@ int main(void)
 	}
 
 	SaveResults();
+#ifdef SIMPLE_CONSOLE
+	ShowResults();
+#else
 	getchar();
+#endif
 }
