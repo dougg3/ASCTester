@@ -160,6 +160,7 @@ struct TestResults
 	struct StatusWriteResult statusWrite[STATUS_WRITE_COUNT];
 	bool statusWriteRepeatIRQ;				// A second write of $01, with the first one not read back yet, flagged an IRQ again
 	bool testedMaskedLatch;					// True if we ran the masked latch test
+	bool maskedUsedHalf;					// The masked latch test used the half empty condition (no full IRQ)
 	bool maskedFlagAfterFill;				// VIA2 IFR bit 4 was set after the FIFO filled up with the ASC masked in IER
 	uint8_t maskedIFRAfterFill;				// VIA2 IFR at that point
 	uint8_t maskedStatus;					// $804 read after that, which releases the original ASC's IRQ line
@@ -1731,9 +1732,28 @@ static void Test_MaskedLatch(void)
 	(void)ascReadReg(0x804);
 	clearVIA2IRQ();
 
-	for (int i = 0; i < 0x500; i++)
+	// Without a full interrupt, fill above half and wait for the half empty condition instead
+	results.maskedUsedHalf = results.fullIRQCount == 0;
+	if (results.maskedUsedHalf)
 	{
-		writeSample(mono, i & 0xFF);
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		for (uint32_t i = 0; i < 200000; i++)
+		{
+			if (via2ReadReg(0x1A03) & 0x10)
+			{
+				break;
+			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 0x500; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
 	}
 	results.maskedFlagAfterFill = via2IRQFlagged();
 	results.maskedIFRAfterFill = via2ReadReg(0x1A03);
@@ -2369,7 +2389,7 @@ int main(void)
 					w->readbackAgain, w->irqAfterRead);
 		}
 		out("\n");
-		out("MaskedLatch %d: %d $%02X $%02X %d $%02X %u\n", results.testedMaskedLatch,
+		out("MaskedLatch %d (%d): %d $%02X $%02X %d $%02X %u\n", results.testedMaskedLatch, results.maskedUsedHalf,
 				results.maskedFlagAfterFill, results.maskedIFRAfterFill, results.maskedStatus,
 				results.maskedFlagAfterRead, results.maskedIFRAfterEnable, results.maskedIRQCount);
 		out("IRQLine %d: %d %d %d %d (%u) $%02X %d\n", results.testedLineType,
