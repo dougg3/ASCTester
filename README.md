@@ -90,6 +90,16 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **c** is 1 if writing $01 a second time, without reading $804 in between, flagged the interrupt again
   - **$xx** and **$yy** are two reads of $804 right after clearing the FIFO (bit 7 of $803), and **d** is 1 if VIA2 flagged an ASC interrupt after the clear
   - then for each value written to $804: **$vv: d $xx $yy e**, where **d** is 1 if VIA2 flagged an ASC interrupt after the write, **$xx** and **$yy** are two reads of $804 after it, and **e** is 1 if VIA2 flagged the interrupt again after clearing it, after those reads
+- **MaskedLatch a: b $xx $ss c $yy n** &mdash; tests whether VIA2 (or the chip standing in for it; some are Apple ASIC reimplementations) latches the ASC interrupt in its IFR while it's masked in its IER, whether the flag stays once the ASC releases its line, and whether enabling the ASC afterwards delivers it. With the ASC masked and CPU interrupts off, fills the FIFO (on the original ASC, the full condition drives the line), reads $804 (which releases the line on the original ASC), then enables the ASC in the IER and turns CPU interrupts back on:
+  - **a** is 1 if the test was performed
+  - **b** is 1 if IFR bit 4 was set after the FIFO filled up
+  - **$xx** is the raw IFR at that point (on a 6522, bit 7 only reflects enabled sources)
+  - **$ss** is the $804 read that follows
+  - **c** is 1 if IFR bit 4 was still set after that read
+  - **$yy** is the raw IFR after enabling the ASC in the IER
+  - **n** is the number of interrupts taken after turning CPU interrupts back on (the handler doesn't read $804)
+
+  On the IIci (oscilloscope measurements by Doug Brown), the ASC holds its line until $804 is read and the RBV latches the falling edge whatever its IER says, so b, c and n are expected to be 1. Variants with a level interrupt (V8...) release the line only when the FIFO is above half empty, which the IRQLine test below covers.
 
 All the results are also saved to a text file named "ASCTester Results" next to the application.
 

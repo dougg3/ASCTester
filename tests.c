@@ -137,6 +137,13 @@ struct TestResults
 	bool fifoClearIRQ;						// An ASC IRQ was flagged in VIA2 after the FIFO clear
 	struct StatusWriteResult statusWrite[STATUS_WRITE_COUNT];
 	bool statusWriteRepeatIRQ;				// A second write of $01, with the first one not read back yet, flagged an IRQ again
+	bool testedMaskedLatch;					// True if we ran the masked latch test
+	bool maskedFlagAfterFill;				// VIA2 IFR bit 4 was set after the FIFO filled up with the ASC masked in IER
+	uint8_t maskedIFRAfterFill;				// VIA2 IFR at that point
+	uint8_t maskedStatus;					// $804 read after that, which releases the original ASC's IRQ line
+	bool maskedFlagAfterRead;				// VIA2 IFR bit 4 was still set after that read
+	uint8_t maskedIFRAfterEnable;			// VIA2 IFR after enabling the ASC in IER, CPU interrupts still off
+	volatile uint32_t maskedIRQCount;		// IRQs taken after turning CPU interrupts back on
 };
 
 static void DisableASCVBLTask(void);
@@ -162,6 +169,7 @@ static void Test_CancelIRQ(void);
 
 static void Test_TimerAvailable(void);
 static void Test_StatusWrite(void);
+static void Test_MaskedLatch(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -183,6 +191,7 @@ static ASCTestFunc tests[] =
 	Test_CancelIRQ,
 	Test_TimerAvailable,
 	Test_StatusWrite,
+	Test_MaskedLatch,
 	RestoreASCVBLTask,
 };
 
@@ -1415,6 +1424,19 @@ struct SavedASCState
 	uint8_t f29;
 };
 
+// Writes one sample to FIFO A, or to both FIFOs in stereo
+static void writeSample(bool mono, uint8_t sample)
+{
+	if (mono)
+	{
+		ascWriteReg(0x0, sample);
+	}
+	else
+	{
+		ascWriteStereoSample(sample);
+	}
+}
+
 // Clears the ASC flag in VIA2's IFR
 static void clearVIA2IRQ(void)
 {
@@ -1554,6 +1576,74 @@ static void Test_StatusWrite(void)
 	ascWriteReg(0x804, 0x01);
 	results.statusWriteRepeatIRQ = via2IRQFlagged();
 
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+static void Test_MaskedLatchHandler(void)
+{
+	// Acknowledge the IRQ, but leave $804 alone so the handler only sees what VIA2 latched
+	via2WriteReg(0x1A03, 0x90);
+
+	TestResults *r = resultsFromIRQ();
+	r->maskedIRQCount++;
+
+	// Prevent IRQ floods
+	if (r->maskedIRQCount >= IRQ_FLOOD_TEST_COUNT)
+	{
+		via2WriteReg(0x1C13, 0x10);
+	}
+}
+
+// Tests whether VIA2 (or the chip standing in for it) latches the ASC IRQ in its IFR while
+// the ASC is masked in its IER, whether the flag stays once the ASC releases its line, and
+// whether enabling the ASC afterwards delivers that interrupt. Some of these are Apple ASIC
+// reimplementations of the VIA and may not behave like a 6522.
+// The FIFO filling up raises the original ASC's line and reading $804 releases it. Variants
+// with a level IRQ (V8...) release it only when the FIFO is above half empty instead.
+static void Test_MaskedLatch(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedMaskedLatch = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	uint16_t irqState = DisableIRQ();
+	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
+	*(TestResults **)ApplScratch = &results;
+	via2Handlers()[4] = Test_MaskedLatchHandler;
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+
+	for (int i = 0; i < 0x500; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.maskedFlagAfterFill = via2IRQFlagged();
+	results.maskedIFRAfterFill = via2ReadReg(0x1A03);
+	results.maskedStatus = ascReadReg(0x804);
+	results.maskedFlagAfterRead = via2IRQFlagged();
+
+	via2WriteReg(0x1C13, 0x90);
+	results.maskedIFRAfterEnable = via2ReadReg(0x1A03);
+	RestoreIRQ(irqState);
+
+	// Give a pending interrupt time to be taken. The FIFO drains past half empty
+	// after about 23 ms, so stay well below that.
+	for (int i = 0; i < 200; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+
+	irqState = DisableIRQ();
+	via2WriteReg(0x1C13, 0x10);
+	via2Handlers()[4] = originalASCIRQHandler;
 	RestoreIRQ(irqState);
 	FinishIRQLineTest(&saved);
 }
@@ -1740,6 +1830,9 @@ int main(void)
 					w->readbackAgain, w->irqAfterRead);
 		}
 		out("\n");
+		out("MaskedLatch %d: %d $%02X $%02X %d $%02X %u\n", results.testedMaskedLatch,
+				results.maskedFlagAfterFill, results.maskedIFRAfterFill, results.maskedStatus,
+				results.maskedFlagAfterRead, results.maskedIFRAfterEnable, results.maskedIRQCount);
 	}
 	else
 	{
