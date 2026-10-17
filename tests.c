@@ -228,6 +228,12 @@ struct TestResults
 	uint8_t reg808Status;					// $804 read at the end: the flags the $808 reads left
 	bool testedModeEntry;					// True if we ran the mode entry test
 	struct ModeEntryResult modeEntry[MODE_ENTRY_CASES];
+	bool testedModeGate;					// True if we ran the mode gate test
+	bool gateUsedHalf;						// The test used the half empty condition (no full IRQ)
+	bool gateFlag;							// VIA2 flagged the ASC after the FIFO condition
+	bool gateFlagMode0;						// VIA2 flagged it again after switching to mode 0 and clearing the flag
+	bool gateFlagMode1;						// VIA2 flagged it again after switching back to FIFO mode
+	uint8_t gateStatus;						// $804 read at the end, never read before
 };
 
 static void DisableASCVBLTask(void);
@@ -260,6 +266,7 @@ static void Test_StatusLevels(void);
 static void Test_HalfAck(void);
 static void Test_Reg808(void);
 static void Test_ModeEntry(void);
+static void Test_ModeGate(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -288,6 +295,7 @@ static ASCTestFunc tests[] =
 	Test_HalfAck,
 	Test_Reg808,
 	Test_ModeEntry,
+	Test_ModeGate,
 	RestoreASCVBLTask,
 };
 
@@ -2387,6 +2395,70 @@ static void Test_ModeEntry(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Tests whether a FIFO condition left pending in $804 survives a switch to mode 0 and back,
+// and whether the interrupt output follows the mode. With the ASC masked in VIA2's IER, raises
+// the full condition (the half empty one if the FIFO IRQ test saw no full interrupt), switches
+// to mode 0, clears the VIA2 flag, then switches back to FIFO mode, without reading $804. With
+// an edge triggered VIA2 input, a new flag after switching back means the line was released in
+// mode 0 and asserted again in FIFO mode.
+static void Test_ModeGate(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedModeGate = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+
+	results.gateUsedHalf = results.fullIRQCount == 0;
+	if (results.gateUsedHalf)
+	{
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		(void)ascReadReg(0x804);
+		clearVIA2IRQ();
+		for (uint32_t i = 0; i < 200000; i++)
+		{
+			if (via2ReadReg(0x1A03) & 0x10)
+			{
+				break;
+			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 0x500; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+	}
+	results.gateFlag = via2IRQFlagged();
+
+	ascWriteReg(0x801, 0);
+	WaitSamples();
+	clearVIA2IRQ();
+	results.gateFlagMode0 = via2IRQFlagged();
+
+	clearVIA2IRQ();
+	ascWriteReg(0x801, 1);
+	WaitSamples();
+	results.gateFlagMode1 = via2IRQFlagged();
+	results.gateStatus = ascReadReg(0x804);
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2618,6 +2690,9 @@ int main(void)
 				results.modeEntry[4].flag, results.modeEntry[4].status,
 				results.modeEntry[5].flag, results.modeEntry[5].status,
 				results.modeEntry[6].flag, results.modeEntry[6].status);
+		out("ModeGate %d (%d): %d, mode 0 %d, mode 1 %d $%02X\n", results.testedModeGate,
+				results.gateUsedHalf, results.gateFlag, results.gateFlagMode0, results.gateFlagMode1,
+				results.gateStatus);
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];

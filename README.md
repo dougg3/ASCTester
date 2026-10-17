@@ -140,6 +140,13 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **0+clear**: a FIFO clear in mode 0
   - **0>1 above half**: as 0>1, but with 768 samples written in FIFO mode before going to mode 0 (it shows whether the FIFO keeps them, and whether entering FIFO mode above half flags anything)
   - **0+clear>1**: a FIFO clear in mode 0, then mode 0 to FIFO mode, without reading $804 in between: whether a condition latched by the clear in mode 0 shows up when entering FIFO mode
+- **ModeGate a (h): b, mode 0 c, mode 1 d $ss** &mdash; tests whether a FIFO condition left pending in $804 survives a switch to mode 0 and back, and whether the interrupt output follows the mode. With the ASC masked in VIA2's IER and CPU interrupts off, raises the full condition, switches to mode 0, clears the VIA2 flag, then switches back to FIFO mode, never reading $804:
+  - **a** is 1 if the test was performed
+  - **h** is 1 if the FIFO IRQ test saw no full interrupt: the test then writes 768 samples and waits for the half empty condition instead
+  - **b** is 1 if VIA2 flagged an ASC interrupt after the condition
+  - **c** is 1 if VIA2 flagged it again after switching to mode 0 and clearing the flag (a level triggered input with the line still asserted)
+  - **d** is 1 if VIA2 flagged it again after switching back to FIFO mode. With an edge triggered input (IIci), that means the line was released in mode 0 and asserted again in FIFO mode, with the condition still latched
+  - **$ss** is $804 read at the end: whether the flags survived the mode changes
 - **Levels X: $bb $ff (t), $vv@t, ...** &mdash; records $804 as a FIFO fills up and drains, to show which bits are levels and which are latched flags (a read clears those, so they show up once and then go away), and what each bit means on variants that differ from the original ASC. With interrupts off, $500 samples are written into an empty FIFO as fast as possible (more than it holds, as it drains meanwhile, so it ends up full), then $804 is polled until about 78 ms after the first write. **X** is the FIFO written: in stereo, **A** and **B** on their own and then **AB** for both; in mono, only **A**.
   - **$bb** is $804 right before the first write, **$ff** right after the last one, and **t** when that was, in VIA ticks after the first write
   - then each new value of $804, up to 10, with when it changed in VIA ticks after the first write. A sample period is about 35.2 ticks, so a FIFO filled up at time 0 is half empty at about 18000 and empty at about 36000 (counting from the end of the fill, if writing the samples took longer than playing them)
