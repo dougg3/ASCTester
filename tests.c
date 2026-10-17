@@ -1,9 +1,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <Gestalt.h>
+#include <Files.h>
 #include "asctester.h"
 
 // How many IRQs we receive before we consider it "flooding"
@@ -1376,11 +1378,49 @@ void DoTests(void)
 	}
 }
 
+// Everything printed, kept to save it to a file at the end
+static char outText[4096];
+static size_t outLength;
+
+// Prints to the console and keeps a copy for the results file
+static void out(const char *format, ...)
+{
+	char line[256];
+	va_list args;
+
+	va_start(args, format);
+	vsnprintf(line, sizeof(line), format, args);
+	va_end(args);
+
+	fputs(line, stdout);
+	for (const char *c = line; *c && outLength < sizeof(outText); c++)
+	{
+		outText[outLength++] = (*c == '\n') ? '\r' : *c;
+	}
+}
+
+// Saves everything printed to "ASCTester Results" next to the application
+static void SaveResults(void)
+{
+	static const unsigned char name[] = "\pASCTester Results";
+	short refNum;
+
+	(void)FSDelete(name, 0);
+	if (Create(name, 0, 'ttxt', 'TEXT') != noErr || FSOpen(name, 0, &refNum) != noErr)
+	{
+		return;
+	}
+	long count = outLength;
+	(void)FSWrite(refNum, &count, outText);
+	(void)FSClose(refNum);
+	(void)FlushVol(NULL, 0);
+}
+
 // Prints info about a FIFO test (stereo or mono)
 void PrintFIFOTests(const char *title, struct FIFOTestResults const *f)
 {
-	printf("%s:\n", title);
-	printf("%d %d %d %d %d %d %d %d %d %d %d %d (%u %u)\n",
+	out("%s:\n", title);
+	out("%d %d %d %d %d %d %d %d %d %d %d %d (%u %u)\n",
 			f->aFullTooSoon, f->bFullTooSoon,
 			f->aReachesFull, f->bReachesFull,
 			f->aHalfEmptyIsOffWhenFull, f->bHalfEmptyIsOffWhenFull,
@@ -1403,20 +1443,20 @@ int main(void)
 		DoTests();
 	}
 
-	printf("ASCTester test version 4\n");
+	out("ASCTester test version 4\n");
 
 	if (ascExists && (via2Exists || rbvExists))
 	{
-		printf("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
+		out("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
 				(results.sysVersion >> 8) & 0xFF, (results.sysVersion >> 4) & 0x0F,
 				results.sysVersion & 0x0F);
-		printf("AddrMapFlags: $%08X\n", flags);
-		printf("F09: %d ($%02X)  F29: %d ($%02X)\n",
+		out("AddrMapFlags: $%08X\n", flags);
+		out("F09: %d ($%02X)  F29: %d ($%02X)\n",
 				results.regF09Exists, results.regF09InitialValue,
 				results.regF29Exists, results.regF29InitialValue);
-		printf("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
+		out("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
 				results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2, results.reg801InitialValue);
-		printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
+		out("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
 				results.acceptsConfigStereo, results.shouldTestStereo);
 
 		if (results.shouldTestMono)
@@ -1427,16 +1467,16 @@ int main(void)
 		{
 			PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
 		}
-		printf("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
-		printf("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
+		out("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
+		out("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
 				results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
 				results.idleIRQWithoutF29Count,
 				results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
 				results.idleIRQWithF29Count,
 				results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
-		printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
+		out("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
 				results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
-		printf("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
+		out("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
 				results.fullIRQCount, results.fullIRQMaxDiff,
 				results.halfEmptyIRQCount, results.halfEmptyIRQMaxDiff,
 				results.emptyIRQCount, results.emptyIRQMaxDiff,
@@ -1444,34 +1484,35 @@ int main(void)
 				results.fifoIRQFiredAfterToggleWhenFull);
 		if (ascVBLTask)
 		{
-			printf("ASC VBL Task was located and temporarily disabled during this test.\n");
+			out("ASC VBL Task was located and temporarily disabled during this test.\n");
 		}
 
-		printf("%d IRQs (start time = %u):\n", results.fifoIRQCount, results.fifoIRQEnableTime);
+		out("%d IRQs (start time = %u):\n", results.fifoIRQCount, results.fifoIRQEnableTime);
 		for (int i = 0; i < results.fifoIRQCount && i < 12; i++)
 		{
-			printf("%s$%02X at t = %5u",
+			out("%s$%02X at t = %5u",
 					i > 0 ? (i & 3 ? ", " : ",\n") : "",
 					results.fifoIRQValues[i],
 					results.fifoIRQTime[i] & 0xFFFF);
 		}
-		printf("%s\n", results.fifoIRQCount > 12 ? ", ..." : "");
-		printf("Cancel %d %d %d %d %d $%02X %u\n", results.testedCancelIRQ, results.cancelIRQInitial,
+		out("%s\n", results.fifoIRQCount > 12 ? ", ..." : "");
+		out("Cancel %d %d %d %d %d $%02X %u\n", results.testedCancelIRQ, results.cancelIRQInitial,
 				results.cancelIRQAfterFill, results.cancelIRQAfterAck, results.cancelIRQAfterWait,
 				results.cancelIRQFinalStatus, results.cancelIRQCount);
 	}
 	else
 	{
-		printf("BoxFlag: %d cannot be tested. AddrMapFlags: $%08X\n", *(uint8_t *)BoxFlag, flags);
+		out("BoxFlag: %d cannot be tested. AddrMapFlags: $%08X\n", *(uint8_t *)BoxFlag, flags);
 		if (!ascExists)
 		{
-			printf("- ASC address map flag isn't valid\n");
+			out("- ASC address map flag isn't valid\n");
 		}
 		if (!via2Exists && !rbvExists)
 		{
-			printf("- VIA2 and RBV address map flags aren't valid\n");
+			out("- VIA2 and RBV address map flags aren't valid\n");
 		}
 	}
 
+	SaveResults();
 	getchar();
 }

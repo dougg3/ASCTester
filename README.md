@@ -84,6 +84,8 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **f** is the value that was observed in ASC register $804 after the test finished
   - **g** is the total count of IRQs observed after enabling interrupts during the cancel test
 
+All the results are also saved to a text file named "ASCTester Results" next to the application.
+
 ## Expected results gathered from working hardware
 
 Several tests are counts that display a number other than 0 or 1. **The large numbers in parentheses other than 50000 will vary between runs.** The important thing is that it's a value greater than 0 and much less than 50000.
