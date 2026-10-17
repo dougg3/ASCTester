@@ -207,6 +207,15 @@ struct TestResults
 	bool ackSecondFlag;						// An ASC IRQ was flagged in VIA2 as the FIFO drained past half empty again
 	uint16_t ackSecondTime;					// When that was, in VIA ticks after the refill
 	uint8_t ackFinalStatus;					// $804 read at the end
+	bool testedReg808;						// True if we ran the $808 test
+	uint8_t reg808Idle[2];					// Two reads of $808 with no flags in $804
+	uint8_t reg808IdleStatus;				// $804 read after that
+	bool reg808FullFlag;					// An ASC IRQ was flagged in VIA2 after filling the FIFO up
+	uint8_t reg808Full[2];					// Two reads of $808 after that, $804 not read
+	bool reg808Edge;						// VIA2 flagged the ASC again as the FIFO drained past half empty, $804 still not read
+	uint16_t reg808EdgeTime;				// When that was, in VIA ticks after clearing the flag
+	uint8_t reg808Half[2];					// Two reads of $808 after that
+	uint8_t reg808Status;					// $804 read at the end: the flags the $808 reads left
 };
 
 static void DisableASCVBLTask(void);
@@ -237,6 +246,7 @@ static void Test_IRQLineType(void);
 static void Test_HalfEmptyThreshold(void);
 static void Test_StatusLevels(void);
 static void Test_HalfAck(void);
+static void Test_Reg808(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -263,6 +273,7 @@ static ASCTestFunc tests[] =
 	Test_HalfEmptyThreshold,
 	Test_StatusLevels,
 	Test_HalfAck,
+	Test_Reg808,
 	RestoreASCVBLTask,
 };
 
@@ -2207,6 +2218,63 @@ static void Test_HalfAck(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Tests whether $808, which isn't documented, reads like $804 without clearing it.
+// With the ASC masked in VIA2's IER, reads $808 with no flags in $804, then after
+// filling the FIFO up, and again after the FIFO drained past half empty, without ever
+// reading $804, then reads $804 to see which flags the $808 reads left. On the original
+// ASC, the line is held until $804 is read, so the half empty condition only flags VIA2
+// again if reading $808 released it.
+static void Test_Reg808(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedReg808 = true;
+
+	const bool mono = !results.shouldTestStereo;
+	const bool timerAvailable = results.timerAvailable;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	if (timerAvailable)
+	{
+		BorrowTimer();
+	}
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.reg808Idle[0] = ascReadReg(0x808);
+	results.reg808Idle[1] = ascReadReg(0x808);
+	results.reg808IdleStatus = ascReadReg(0x804);
+
+	for (int i = 0; i < 0x500; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.reg808FullFlag = via2IRQFlagged();
+	results.reg808Full[0] = ascReadReg(0x808);
+	results.reg808Full[1] = ascReadReg(0x808);
+
+	clearVIA2IRQ();
+	if (timerAvailable)
+	{
+		timerStart();
+	}
+	results.reg808Edge = WaitVIA2IRQ(timerAvailable, &results.reg808EdgeTime);
+	results.reg808Half[0] = ascReadReg(0x808);
+	results.reg808Half[1] = ascReadReg(0x808);
+	results.reg808Status = ascReadReg(0x804);
+
+	if (timerAvailable)
+	{
+		ReturnTimer();
+	}
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2422,6 +2490,11 @@ int main(void)
 				results.ackFlagAfterF29Off, results.ackFlagAfterF29On,
 				results.ackFlagAfterRefill, results.ackRefillStatus, results.ackSecondFlag, results.ackSecondTime,
 				results.ackFinalStatus);
+		out("Reg808 %d: idle $%02X $%02X $%02X, full %d $%02X $%02X, half %d (%u) $%02X $%02X $%02X\n",
+				results.testedReg808, results.reg808Idle[0], results.reg808Idle[1], results.reg808IdleStatus,
+				results.reg808FullFlag, results.reg808Full[0], results.reg808Full[1],
+				results.reg808Edge, results.reg808EdgeTime, results.reg808Half[0], results.reg808Half[1],
+				results.reg808Status);
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];
