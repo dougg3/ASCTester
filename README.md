@@ -84,6 +84,12 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **f** is the value that was observed in ASC register $804 after the test finished
   - **g** is the total count of IRQs observed after enabling interrupts during the cancel test
 - **Timer2: a (ACR $xx IER $xx)** &mdash; **a** is 1 if VIA1 timer 2 can be used as a stopwatch (it isn't in pulse counting mode). The VIA1 ACR and IER values are shown for information. Mac OS (7.1 at least) has the timer 2 interrupt enabled, so the tests below borrow the timer with interrupts off, mask its interrupt and leave it expired with its flag cleared.
+- **StatusWrite a (b) repeat c, clear $xx $yy d** &mdash; tests whether writing to $804 raises the ASC interrupt again, as the Mac II's MMU mode switch code expects (it reads $804 and writes the flags back to get a new interrupt). Done in FIFO mode with an empty FIFO, the ASC interrupt masked in VIA2's IER, polling VIA2's IFR:
+  - **a** is 1 if the test was performed
+  - **b** is 1 if VIA2 flagged an ASC interrupt again right after clearing it, before any write (the line is held active at idle, e.g. V8)
+  - **c** is 1 if writing $01 a second time, without reading $804 in between, flagged the interrupt again
+  - **$xx** and **$yy** are two reads of $804 right after clearing the FIFO (bit 7 of $803), and **d** is 1 if VIA2 flagged an ASC interrupt after the clear
+  - then for each value written to $804: **$vv: d $xx $yy e**, where **d** is 1 if VIA2 flagged an ASC interrupt after the write, **$xx** and **$yy** are two reads of $804 after it, and **e** is 1 if VIA2 flagged the interrupt again after clearing it, after those reads
 
 All the results are also saved to a text file named "ASCTester Results" next to the application.
 

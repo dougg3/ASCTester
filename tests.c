@@ -46,6 +46,19 @@ struct FIFOTestResults
 	uint32_t bFullCount;					// Number of samples written to FIFO B before it's marked as full
 };
 
+// Values written to $804 by the status write test
+static const uint8_t statusWriteValues[] = { 0x01, 0x02, 0x04, 0x08, 0x0F, 0x10, 0x80, 0x00 };
+#define STATUS_WRITE_COUNT					(sizeof(statusWriteValues) / sizeof(statusWriteValues[0]))
+
+// Results for one value written to $804
+struct StatusWriteResult
+{
+	bool irqAfterWrite;						// An ASC IRQ was flagged in VIA2 after the write
+	uint8_t readback;						// First read of $804 after the write
+	uint8_t readbackAgain;					// Second read of $804 after the write
+	bool irqAfterRead;						// The VIA2 flag came back after clearing it, after reading $804
+};
+
 // Test results
 struct TestResults
 {
@@ -117,6 +130,13 @@ struct TestResults
 	bool timerAvailable;					// VIA1 timer 2 is free to use as a stopwatch
 	uint8_t via1ACR;						// VIA1 ACR when checking timer 2
 	uint8_t via1IER;						// VIA1 IER when checking timer 2
+	bool testedStatusWrite;					// True if we ran the status write test
+	bool statusWriteIRQBefore;				// An ASC IRQ was flagged in VIA2 right after clearing it, before any write
+	uint8_t fifoClearStatus;				// $804 read right after a FIFO clear (bit 7 of $803)
+	uint8_t fifoClearStatusAgain;			// $804 read again after that
+	bool fifoClearIRQ;						// An ASC IRQ was flagged in VIA2 after the FIFO clear
+	struct StatusWriteResult statusWrite[STATUS_WRITE_COUNT];
+	bool statusWriteRepeatIRQ;				// A second write of $01, with the first one not read back yet, flagged an IRQ again
 };
 
 static void DisableASCVBLTask(void);
@@ -141,6 +161,7 @@ static void Test_FIFOIRQ_WhileFull(void);
 static void Test_CancelIRQ(void);
 
 static void Test_TimerAvailable(void);
+static void Test_StatusWrite(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -161,6 +182,7 @@ static ASCTestFunc tests[] =
 	Test_FIFOIRQ_WhileFull,
 	Test_CancelIRQ,
 	Test_TimerAvailable,
+	Test_StatusWrite,
 	RestoreASCVBLTask,
 };
 
@@ -1383,6 +1405,97 @@ static void Test_CancelIRQ(void)
 	results.cancelIRQFinalStatus = finalStatus;
 }
 
+// ASC and VIA2 state saved by PrepareIRQLineTest
+struct SavedASCState
+{
+	uint8_t mode;
+	uint8_t control;
+	bool irqEnabledInVIA2;
+	uint8_t f09;
+	uint8_t f29;
+};
+
+// Clears the ASC flag in VIA2's IFR
+static void clearVIA2IRQ(void)
+{
+	via2WriteReg(0x1A03, 0x90);
+}
+
+// Returns whether the ASC is flagged in VIA2's IFR, after giving VIA2 a few cycles to see the line
+static bool via2IRQFlagged(void)
+{
+	for (int i = 0; i < 4; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+	return via2ReadReg(0x1A03) & 0x10;
+}
+
+// Puts the ASC in FIFO mode with its IRQ masked in VIA2, so that the tests can poll VIA2's IFR.
+// Enables F29 if it exists, like the other FIFO IRQ tests.
+static void PrepareIRQLineTest(bool mono, SavedASCState *s)
+{
+	const uint16_t irqState = DisableIRQ();
+	s->mode = ascReadReg(0x801);
+	s->control = ascReadReg(0x802);
+	s->irqEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	s->f09 = results.regF09Exists ? ascReadReg(0xF09) : 0;
+	s->f29 = results.regF29Exists ? ascReadReg(0xF29) : 0;
+
+	via2WriteReg(0x1C13, 0x10);
+	ascWriteReg(0x801, 1);
+	if (mono)
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) & ~0x02);
+	}
+	else
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) | 0x02);
+	}
+	if (results.regF09Exists)
+	{
+		// Leave F09 disabled; on newer variants it's related to recording instead of playback.
+		ascWriteReg(0xF09, 1);
+	}
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, 0);
+	}
+	RestoreIRQ(irqState);
+}
+
+// Undoes PrepareIRQLineTest
+static void FinishIRQLineTest(const SavedASCState *s)
+{
+	const uint16_t irqState = DisableIRQ();
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, s->f09);
+	}
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, s->f29);
+	}
+	ascWriteReg(0x802, s->control);
+	ascWriteReg(0x801, s->mode);
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	via2WriteReg(0x1C13, s->irqEnabledInVIA2 ? 0x90 : 0x10);
+	RestoreIRQ(irqState);
+}
+
+// Clears the FIFO and waits long enough for it to be empty in any case
+static void EmptyFIFO(void)
+{
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+
+	const uint32_t startTicks = ticks();
+	while (ticks() - startTicks < 4)
+	{
+	}
+}
+
 // Checks that VIA1 timer 2 counts clock pulses, so it can be used as a stopwatch.
 // Mac OS has its interrupt enabled, so the tests only borrow it with interrupts off.
 static void Test_TimerAvailable(void)
@@ -1390,6 +1503,59 @@ static void Test_TimerAvailable(void)
 	results.via1ACR = via1ReadReg(0x1600);
 	results.via1IER = via1ReadReg(0x1C00);
 	results.timerAvailable = !(results.via1ACR & 0x20);
+}
+
+// Tests whether writing to $804 raises the IRQ (the Mac II MMU mode switch code writes
+// the flags back to get a new interrupt), and what $804 reads back afterwards.
+// Done with an empty FIFO, where the original ASC has no IRQ condition of its own.
+static void Test_StatusWrite(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedStatusWrite = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.statusWriteIRQBefore = via2IRQFlagged();
+
+	// What a FIFO clear leaves in $804
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	results.fifoClearIRQ = via2IRQFlagged();
+	results.fifoClearStatus = ascReadReg(0x804);
+	results.fifoClearStatusAgain = ascReadReg(0x804);
+
+	for (size_t i = 0; i < STATUS_WRITE_COUNT; i++)
+	{
+		StatusWriteResult *w = &results.statusWrite[i];
+
+		(void)ascReadReg(0x804);
+		clearVIA2IRQ();
+		ascWriteReg(0x804, statusWriteValues[i]);
+		w->irqAfterWrite = via2IRQFlagged();
+		w->readback = ascReadReg(0x804);
+		w->readbackAgain = ascReadReg(0x804);
+		clearVIA2IRQ();
+		w->irqAfterRead = via2IRQFlagged();
+	}
+
+	// Write the same flag twice without reading $804 in between
+	(void)ascReadReg(0x804);
+	ascWriteReg(0x804, 0x01);
+	clearVIA2IRQ();
+	ascWriteReg(0x804, 0x01);
+	results.statusWriteRepeatIRQ = via2IRQFlagged();
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
 }
 
 // Runs all the tests
@@ -1562,6 +1728,18 @@ int main(void)
 				results.cancelIRQAfterFill, results.cancelIRQAfterAck, results.cancelIRQAfterWait,
 				results.cancelIRQFinalStatus, results.cancelIRQCount);
 		out("Timer2: %d (ACR $%02X IER $%02X)\n", results.timerAvailable, results.via1ACR, results.via1IER);
+		out("StatusWrite %d (%d) repeat %d, clear $%02X $%02X %d:\n", results.testedStatusWrite,
+				results.statusWriteIRQBefore, results.statusWriteRepeatIRQ,
+				results.fifoClearStatus, results.fifoClearStatusAgain, results.fifoClearIRQ);
+		for (size_t i = 0; i < STATUS_WRITE_COUNT; i++)
+		{
+			const StatusWriteResult *w = &results.statusWrite[i];
+			out("%s$%02X: %d $%02X $%02X %d",
+					i > 0 ? (i & 3 ? ", " : ",\n") : "",
+					statusWriteValues[i], w->irqAfterWrite, w->readback,
+					w->readbackAgain, w->irqAfterRead);
+		}
+		out("\n");
 	}
 	else
 	{
