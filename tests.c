@@ -189,6 +189,23 @@ struct TestResults
 	int32_t fullLevelMax;					// Highest estimated FIFO level at the full flag, in 1/100 samples
 	int32_t fullLevelAvg;					// Average estimated FIFO level at the full flag, in 1/100 samples
 	struct LevelResult levels[LEVEL_CHANNELS];	// Status levels test: FIFO A, FIFO B, both (stereo only)
+	bool testedHalfAck;						// True if we ran the half empty acknowledge test
+	bool ackFlagBefore;						// An ASC IRQ was flagged in VIA2 after reading $804 and clearing it, before the fill
+	bool ackFlagAfterFill;					// An ASC IRQ was flagged in VIA2 after filling the FIFO above half
+	uint8_t ackFillStatus;					// $804 read right after the fill, which releases the line
+	bool ackHalfFlag;						// An ASC IRQ was flagged in VIA2 as the FIFO drained past half empty
+	uint16_t ackHalfTime;					// When that was, in VIA ticks after the fill
+	bool ackFlagAfterClear;					// The VIA2 flag came back right after clearing it, with $804 not read
+	uint8_t ackStatus;						// $804 read after that
+	bool ackFlagAfterRead;					// The VIA2 flag came back after clearing it, after reading $804
+	uint8_t ackStatusAgain;					// $804 read again
+	bool ackFlagAfterF29Off;				// The VIA2 flag came back after writing 1 to F29
+	bool ackFlagAfterF29On;					// The VIA2 flag came back after writing 0 to F29, below half empty
+	bool ackFlagAfterRefill;				// An ASC IRQ was flagged in VIA2 after refilling the FIFO above half
+	uint8_t ackRefillStatus;				// $804 read right after the refill
+	bool ackSecondFlag;						// An ASC IRQ was flagged in VIA2 as the FIFO drained past half empty again
+	uint16_t ackSecondTime;					// When that was, in VIA ticks after the refill
+	uint8_t ackFinalStatus;					// $804 read at the end
 };
 
 static void DisableASCVBLTask(void);
@@ -218,6 +235,7 @@ static void Test_MaskedLatch(void);
 static void Test_IRQLineType(void);
 static void Test_HalfEmptyThreshold(void);
 static void Test_StatusLevels(void);
+static void Test_HalfAck(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -243,6 +261,7 @@ static ASCTestFunc tests[] =
 	Test_IRQLineType,
 	Test_HalfEmptyThreshold,
 	Test_StatusLevels,
+	Test_HalfAck,
 	RestoreASCVBLTask,
 };
 
@@ -2055,6 +2074,119 @@ static void Test_StatusLevels(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Polls VIA2's IFR until the ASC is flagged. With VIA1 timer 2, gives up after about 80 ms
+// and returns when it happened in VIA ticks after timerStart.
+static bool WaitVIA2IRQ(bool timerAvailable, uint16_t *time)
+{
+	for (uint32_t i = 0; i < 200000; i++)
+	{
+		if (via2ReadReg(0x1A03) & 0x10)
+		{
+			if (timerAvailable)
+			{
+				*time = timerElapsed();
+			}
+			return true;
+		}
+		if (timerAvailable && timerElapsed() >= 0xF000)
+		{
+			break;
+		}
+	}
+	if (timerAvailable)
+	{
+		*time = timerElapsed();
+	}
+	return false;
+}
+
+// Tests what releases the half empty interrupt, for variants where $804 holds levels
+// rather than flags cleared by a read. With the ASC masked in VIA2's IER, fills the FIFO
+// above half (but not full), waits for VIA2 to flag the half empty condition, then checks
+// whether the flag comes back after clearing it in VIA2 only, after reading $804, after
+// writing 1 and then 0 to F29, and after refilling the FIFO above half.
+static void Test_HalfAck(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedHalfAck = true;
+
+	const bool mono = !results.shouldTestStereo;
+	const bool timerAvailable = results.timerAvailable;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	if (timerAvailable)
+	{
+		BorrowTimer();
+	}
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.ackFlagBefore = via2IRQFlagged();
+
+	// A sample played while the fill goes through the half level can raise the half empty
+	// condition on the way up, so read $804 after the fill to start from a released line.
+	for (int i = 0; i < 0x300; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.ackFlagAfterFill = via2IRQFlagged();
+	results.ackFillStatus = ascReadReg(0x804);
+	clearVIA2IRQ();
+	if (timerAvailable)
+	{
+		timerStart();
+	}
+	results.ackHalfFlag = WaitVIA2IRQ(timerAvailable, &results.ackHalfTime);
+
+	if (results.ackHalfFlag)
+	{
+		clearVIA2IRQ();
+		results.ackFlagAfterClear = via2IRQFlagged();
+		results.ackStatus = ascReadReg(0x804);
+		clearVIA2IRQ();
+		results.ackFlagAfterRead = via2IRQFlagged();
+		results.ackStatusAgain = ascReadReg(0x804);
+
+		if (results.regF29Exists)
+		{
+			clearVIA2IRQ();
+			ascWriteReg(0xF29, 1);
+			results.ackFlagAfterF29Off = via2IRQFlagged();
+			clearVIA2IRQ();
+			ascWriteReg(0xF29, 0);
+			results.ackFlagAfterF29On = via2IRQFlagged();
+		}
+
+		// The FIFO is below half, so this brings it above half without filling it up
+		clearVIA2IRQ();
+		for (int i = 0; i < 0x100; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		results.ackFlagAfterRefill = via2IRQFlagged();
+		results.ackRefillStatus = ascReadReg(0x804);
+		clearVIA2IRQ();
+		if (timerAvailable)
+		{
+			timerStart();
+		}
+		results.ackSecondFlag = WaitVIA2IRQ(timerAvailable, &results.ackSecondTime);
+	}
+	results.ackFinalStatus = ascReadReg(0x804);
+
+	if (timerAvailable)
+	{
+		ReturnTimer();
+	}
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2263,6 +2395,13 @@ int main(void)
 					(long)results.fullLevelAvg / 100, (long)results.fullLevelAvg % 100,
 					(long)results.fullLevelMax / 100, (long)results.fullLevelMax % 100);
 		}
+		out("HalfAck %d: %d %d $%02X %d (%u) %d $%02X %d $%02X, F29 %d %d, refill %d $%02X %d (%u) $%02X\n",
+				results.testedHalfAck, results.ackFlagBefore, results.ackFlagAfterFill, results.ackFillStatus,
+				results.ackHalfFlag, results.ackHalfTime,
+				results.ackFlagAfterClear, results.ackStatus, results.ackFlagAfterRead, results.ackStatusAgain,
+				results.ackFlagAfterF29Off, results.ackFlagAfterF29On,
+				results.ackFlagAfterRefill, results.ackRefillStatus, results.ackSecondFlag, results.ackSecondTime,
+				results.ackFinalStatus);
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];
