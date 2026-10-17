@@ -65,6 +65,16 @@ struct StatusWriteResult
 #define THRESHOLD_FILL						0x300
 #define THRESHOLD_REFILL					0x100
 
+// Cases of the mode entry test
+#define MODE_ENTRY_CASES					7
+
+// What a mode change or FIFO clear left
+struct ModeEntryResult
+{
+	bool flag;								// VIA2 flagged an ASC interrupt
+	uint8_t status;							// $804 read after that
+};
+
 // FIFOs filled by the status levels test, and how many $804 changes it records for each
 #define LEVEL_CHANNELS						3
 #define LEVEL_CHANGES						10
@@ -216,6 +226,8 @@ struct TestResults
 	uint16_t reg808EdgeTime;				// When that was, in VIA ticks after clearing the flag
 	uint8_t reg808Half[2];					// Two reads of $808 after that
 	uint8_t reg808Status;					// $804 read at the end: the flags the $808 reads left
+	bool testedModeEntry;					// True if we ran the mode entry test
+	struct ModeEntryResult modeEntry[MODE_ENTRY_CASES];
 };
 
 static void DisableASCVBLTask(void);
@@ -247,6 +259,7 @@ static void Test_HalfEmptyThreshold(void);
 static void Test_StatusLevels(void);
 static void Test_HalfAck(void);
 static void Test_Reg808(void);
+static void Test_ModeEntry(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -274,6 +287,7 @@ static ASCTestFunc tests[] =
 	Test_StatusLevels,
 	Test_HalfAck,
 	Test_Reg808,
+	Test_ModeEntry,
 	RestoreASCVBLTask,
 };
 
@@ -2275,6 +2289,104 @@ static void Test_Reg808(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Waits a few sample periods (about 1.3 us per VIA access, 45 us per sample)
+static void WaitSamples(void)
+{
+	for (int i = 0; i < 150; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+}
+
+// Empties the FIFO in FIFO mode, optionally fills it above half, then sets the mode
+// to start from, clears $804 and the VIA2 flag
+static void ModeEntrySetup(bool mono, uint8_t mode, bool fill)
+{
+	ascWriteReg(0x801, 1);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	if (fill)
+	{
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+	}
+	ascWriteReg(0x801, mode);
+	WaitSamples();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+}
+
+// Records whether VIA2 flagged an ASC interrupt a few samples after a mode change or
+// FIFO clear, and what $804 reads
+static void ModeEntryCheck(ModeEntryResult *r)
+{
+	WaitSamples();
+	r->flag = via2IRQFlagged();
+	r->status = ascReadReg(0x804);
+}
+
+// Tests whether entering FIFO mode, or clearing the FIFO, flags anything. The other tests
+// always read $804 right after setting FIFO mode, which would hide it.
+// With the ASC masked in VIA2's IER and CPU interrupts off, from an empty FIFO:
+// - mode 0 to 1, mode 1 to 1 (written again), mode 2 to 1
+// - mode 0 to 1 followed by a FIFO clear, and a FIFO clear alone in mode 0
+// - mode 0 to 1 with the FIFO filled above half before going to mode 0
+// - a FIFO clear in mode 0, then mode 0 to 1, without reading $804 in between
+static void Test_ModeEntry(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedModeEntry = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	const uint16_t irqState = DisableIRQ();
+	ModeEntryResult *r = results.modeEntry;
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[0]);
+
+	ModeEntrySetup(mono, 1, false);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[1]);
+
+	ModeEntrySetup(mono, 2, false);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[2]);
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x801, 1);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	ModeEntryCheck(&r[3]);
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	ModeEntryCheck(&r[4]);
+
+	ModeEntrySetup(mono, 0, true);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[5]);
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	WaitSamples();
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[6]);
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2495,6 +2607,17 @@ int main(void)
 				results.reg808FullFlag, results.reg808Full[0], results.reg808Full[1],
 				results.reg808Edge, results.reg808EdgeTime, results.reg808Half[0], results.reg808Half[1],
 				results.reg808Status);
+		out("ModeEntry %d: 0>1 %d $%02X, 1>1 %d $%02X, 2>1 %d $%02X,\n"
+				"0>1+clear %d $%02X, 0+clear %d $%02X, 0>1 above half %d $%02X,\n"
+				"0+clear>1 %d $%02X\n",
+				results.testedModeEntry,
+				results.modeEntry[0].flag, results.modeEntry[0].status,
+				results.modeEntry[1].flag, results.modeEntry[1].status,
+				results.modeEntry[2].flag, results.modeEntry[2].status,
+				results.modeEntry[3].flag, results.modeEntry[3].status,
+				results.modeEntry[4].flag, results.modeEntry[4].status,
+				results.modeEntry[5].flag, results.modeEntry[5].status,
+				results.modeEntry[6].flag, results.modeEntry[6].status);
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];
