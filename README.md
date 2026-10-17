@@ -83,6 +83,7 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **e** is 1 if an ASC IRQ was still signaled in the VIA2's IFR after interrupts were enabled
   - **f** is the value that was observed in ASC register $804 after the test finished
   - **g** is the total count of IRQs observed after enabling interrupts during the cancel test
+- **Timer2: a (ACR $xx IER $xx)** &mdash; **a** is 1 if VIA1 timer 2 can be used as a stopwatch (it isn't in pulse counting mode). The VIA1 ACR and IER values are shown for information. Mac OS (7.1 at least) has the timer 2 interrupt enabled, so the tests below borrow the timer with interrupts off, mask its interrupt and leave it expired with its flag cleared.
 
 All the results are also saved to a text file named "ASCTester Results" next to the application.
 

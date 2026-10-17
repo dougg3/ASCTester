@@ -8,6 +8,7 @@
 #define BoxFlag				0xCB3
 #define Ticks				0x16A
 #define AddrMapFlags		0xDD0
+#define VIA1Base			0x1D4
 
 typedef void (*VIA2Handler)(void);
 
@@ -48,6 +49,51 @@ static inline uint8_t via2ReadReg(uint16_t offset)
 static inline void via2WriteReg(uint16_t offset, uint8_t value)
 {
 	*((volatile uint8_t *)((*(uint8_t **)VIA2Base) + offset)) = value;
+}
+
+// Reads a VIA1 register
+static inline uint8_t via1ReadReg(uint16_t offset)
+{
+	return *((volatile uint8_t *)((*(uint8_t **)VIA1Base) + offset));
+}
+
+// Writes a VIA1 register
+static inline void via1WriteReg(uint16_t offset, uint8_t value)
+{
+	*((volatile uint8_t *)((*(uint8_t **)VIA1Base) + offset)) = value;
+}
+
+// Loads VIA1 timer 2 with a count and starts it, which also clears its flag
+static inline void timerLoad(uint16_t count)
+{
+	via1WriteReg(0x1000, count & 0xFF);
+	via1WriteReg(0x1200, count >> 8);
+}
+
+// Reads the VIA1 timer 2 counter. This clears its flag.
+static inline uint16_t timerCount(void)
+{
+	uint8_t hi, lo;
+
+	do
+	{
+		hi = via1ReadReg(0x1200);
+		lo = via1ReadReg(0x1000);
+	} while (hi != via1ReadReg(0x1200));
+
+	return (hi << 8) | lo;
+}
+
+// Starts VIA1 timer 2 counting down from $FFFF, used as a stopwatch
+static inline void timerStart(void)
+{
+	timerLoad(0xFFFF);
+}
+
+// Returns the number of VIA ticks since timerStart (valid for less than $FFFF ticks)
+static inline uint16_t timerElapsed(void)
+{
+	return 0xFFFF - timerCount();
 }
 
 // The VIA2 dispatch table

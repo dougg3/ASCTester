@@ -114,6 +114,9 @@ struct TestResults
 	bool cancelIRQAfterWait;				// True if an IRQ was still flagged in VIA2 after we enabled IRQs and waited 10 seconds
 	uint8_t cancelIRQFinalStatus;			// Final status read from reg 0x804 after the cancel test
 	volatile uint32_t cancelIRQCount;		// Count of IRQs we observed during the cancel test
+	bool timerAvailable;					// VIA1 timer 2 is free to use as a stopwatch
+	uint8_t via1ACR;						// VIA1 ACR when checking timer 2
+	uint8_t via1IER;						// VIA1 IER when checking timer 2
 };
 
 static void DisableASCVBLTask(void);
@@ -137,6 +140,8 @@ static void Test_FIFOIRQ_WhileFull(void);
 
 static void Test_CancelIRQ(void);
 
+static void Test_TimerAvailable(void);
+
 // List of all tests
 static ASCTestFunc tests[] =
 {
@@ -155,6 +160,7 @@ static ASCTestFunc tests[] =
 	Test_FIFOIRQ,
 	Test_FIFOIRQ_WhileFull,
 	Test_CancelIRQ,
+	Test_TimerAvailable,
 	RestoreASCVBLTask,
 };
 
@@ -1377,6 +1383,15 @@ static void Test_CancelIRQ(void)
 	results.cancelIRQFinalStatus = finalStatus;
 }
 
+// Checks that VIA1 timer 2 counts clock pulses, so it can be used as a stopwatch.
+// Mac OS has its interrupt enabled, so the tests only borrow it with interrupts off.
+static void Test_TimerAvailable(void)
+{
+	results.via1ACR = via1ReadReg(0x1600);
+	results.via1IER = via1ReadReg(0x1C00);
+	results.timerAvailable = !(results.via1ACR & 0x20);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -1546,6 +1561,7 @@ int main(void)
 		out("Cancel %d %d %d %d %d $%02X %u\n", results.testedCancelIRQ, results.cancelIRQInitial,
 				results.cancelIRQAfterFill, results.cancelIRQAfterAck, results.cancelIRQAfterWait,
 				results.cancelIRQFinalStatus, results.cancelIRQCount);
+		out("Timer2: %d (ACR $%02X IER $%02X)\n", results.timerAvailable, results.via1ACR, results.via1IER);
 	}
 	else
 	{
