@@ -65,6 +65,22 @@ struct StatusWriteResult
 #define THRESHOLD_FILL						0x300
 #define THRESHOLD_REFILL					0x100
 
+// FIFOs filled by the status levels test, and how many $804 changes it records for each
+#define LEVEL_CHANNELS						3
+#define LEVEL_CHANGES						10
+
+// $804 as one FIFO (or both) fills up and drains
+struct LevelResult
+{
+	bool tested;							// True if this FIFO was tested
+	uint8_t before;							// $804 right before the first write into an empty FIFO
+	uint8_t afterFill;						// $804 right after writing $500 samples
+	uint16_t fillTime;						// When that was, in VIA ticks after the first write
+	uint8_t count;							// Number of changes recorded after that
+	uint8_t values[LEVEL_CHANGES];			// $804 after each change
+	uint16_t times[LEVEL_CHANGES];			// When it changed, in VIA ticks after the first write
+};
+
 // Test results
 struct TestResults
 {
@@ -172,6 +188,7 @@ struct TestResults
 	int32_t fullLevelMin;					// Lowest estimated FIFO level at the full flag, in 1/100 samples
 	int32_t fullLevelMax;					// Highest estimated FIFO level at the full flag, in 1/100 samples
 	int32_t fullLevelAvg;					// Average estimated FIFO level at the full flag, in 1/100 samples
+	struct LevelResult levels[LEVEL_CHANNELS];	// Status levels test: FIFO A, FIFO B, both (stereo only)
 };
 
 static void DisableASCVBLTask(void);
@@ -200,6 +217,7 @@ static void Test_StatusWrite(void);
 static void Test_MaskedLatch(void);
 static void Test_IRQLineType(void);
 static void Test_HalfEmptyThreshold(void);
+static void Test_StatusLevels(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -224,6 +242,7 @@ static ASCTestFunc tests[] =
 	Test_MaskedLatch,
 	Test_IRQLineType,
 	Test_HalfEmptyThreshold,
+	Test_StatusLevels,
 	RestoreASCVBLTask,
 };
 
@@ -1967,6 +1986,75 @@ static void Test_HalfEmptyThreshold(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Fills one FIFO (or both, in stereo) and records each change of $804
+// while it drains, with VIA1 timer 2 as a stopwatch. This shows which bits are levels
+// and which are latched flags (cleared by the reads), and what each bit means. In stereo,
+// FIFO A and FIFO B are filled on their own and then together; in mono, only FIFO A.
+// The FIFO drains while it's being filled, so $500 writes make sure that it ends up full.
+static void Test_StatusLevels(void)
+{
+	if (!results.timerAvailable || (!results.shouldTestMono && !results.shouldTestStereo))
+	{
+		return;
+	}
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
+	{
+		if (mono && channel > 0)
+		{
+			break;
+		}
+		LevelResult *l = &results.levels[channel];
+		l->tested = true;
+
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		l->before = ascReadReg(0x804);
+		timerStart();
+		for (int i = 0; i < 0x500; i++)
+		{
+			if (channel == 0)
+			{
+				ascWriteReg(0x0, i & 0xFF);
+			}
+			else if (channel == 1)
+			{
+				ascWriteReg(0x400, i & 0xFF);
+			}
+			else
+			{
+				ascWriteStereoSample(i & 0xFF);
+			}
+		}
+		l->afterFill = ascReadReg(0x804);
+		l->fillTime = timerElapsed();
+
+		// A full FIFO drains in about 36000 ticks
+		uint8_t last = l->afterFill;
+		while (l->count < LEVEL_CHANGES && timerElapsed() < 0xF000)
+		{
+			const uint8_t status = ascReadReg(0x804);
+			if (status != last)
+			{
+				l->values[l->count] = status;
+				l->times[l->count] = timerElapsed();
+				l->count++;
+				last = status;
+			}
+		}
+		ReturnTimer();
+		RestoreIRQ(irqState);
+	}
+
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2174,6 +2262,21 @@ int main(void)
 					(long)results.fullLevelMin / 100, (long)results.fullLevelMin % 100,
 					(long)results.fullLevelAvg / 100, (long)results.fullLevelAvg % 100,
 					(long)results.fullLevelMax / 100, (long)results.fullLevelMax % 100);
+		}
+		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
+		{
+			const LevelResult *l = &results.levels[channel];
+			if (!l->tested)
+			{
+				continue;
+			}
+			out("Levels %s: $%02X $%02X (%u)", channel == 0 ? "A" : channel == 1 ? "B" : "AB",
+					l->before, l->afterFill, l->fillTime);
+			for (int i = 0; i < l->count; i++)
+			{
+				out("%s$%02X@%u", i > 0 && !(i & 3) ? ",\n" : ", ", l->values[i], l->times[i]);
+			}
+			out("\n");
 		}
 	}
 	else
