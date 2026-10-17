@@ -100,6 +100,15 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **n** is the number of interrupts taken after turning CPU interrupts back on (the handler doesn't read $804)
 
   On the IIci (oscilloscope measurements by Doug Brown), the ASC holds its line until $804 is read and the RBV latches the falling edge whatever its IER says, so b, c and n are expected to be 1. Variants with a level interrupt (V8...) release the line only when the FIFO is above half empty, which the IRQLine test below covers.
+- **IRQLine a: b c d e (t) $xx f** &mdash; tests whether the ASC interrupt input of VIA2 is edge or level triggered, and whether the ASC holds its line until $804 is read or pulses it for each condition. Fills the FIFO without reading $804, with the ASC masked in VIA2's IER, polling the IFR:
+  - **a** is 1 if the test was performed
+  - **b** is 1 if VIA2 flagged an ASC interrupt again right after clearing it, before filling the FIFO (idle level, e.g. V8)
+  - **c** is 1 if VIA2 flagged an ASC interrupt after filling the FIFO
+  - **d** is 1 if the flag came back right after clearing it, with $804 not read: the input is level triggered
+  - **e** is 1 if the flag came back later, as the FIFO drained past half empty, with $804 still not read. With an edge triggered input, that means the ASC pulses its line (or drops it and raises it again) for each condition, rather than holding it until $804 is read
+  - **t** is when that happened, in VIA ticks after clearing the flag (about 61440 means it didn't happen within about 80 ms)
+  - **$xx** is $804 read after that
+  - **f** is 1 if the flag came back after clearing it, after reading $804
 
 All the results are also saved to a text file named "ASCTester Results" next to the application.
 

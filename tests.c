@@ -144,6 +144,14 @@ struct TestResults
 	bool maskedFlagAfterRead;				// VIA2 IFR bit 4 was still set after that read
 	uint8_t maskedIFRAfterEnable;			// VIA2 IFR after enabling the ASC in IER, CPU interrupts still off
 	volatile uint32_t maskedIRQCount;		// IRQs taken after turning CPU interrupts back on
+	bool testedLineType;					// True if we ran the IRQ line type test
+	bool lineIdleIRQ;						// An ASC IRQ was flagged in VIA2 right after clearing it, before filling the FIFO
+	bool lineFullIRQ;						// An ASC IRQ was flagged in VIA2 after filling the FIFO
+	bool lineIRQAfterClear;					// The VIA2 flag came back right after clearing it, with $804 not read yet
+	bool lineSecondIRQ;						// The VIA2 flag came back later while the FIFO drained, with $804 not read yet
+	uint16_t lineSecondTime;				// When the second flag appeared, in VIA ticks after clearing the first one
+	uint8_t lineStatus;						// $804 read after waiting for the second flag
+	bool lineIRQAfterRead;					// The VIA2 flag came back after clearing it, after reading $804
 };
 
 static void DisableASCVBLTask(void);
@@ -170,6 +178,7 @@ static void Test_CancelIRQ(void);
 static void Test_TimerAvailable(void);
 static void Test_StatusWrite(void);
 static void Test_MaskedLatch(void);
+static void Test_IRQLineType(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -192,6 +201,7 @@ static ASCTestFunc tests[] =
 	Test_TimerAvailable,
 	Test_StatusWrite,
 	Test_MaskedLatch,
+	Test_IRQLineType,
 	RestoreASCVBLTask,
 };
 
@@ -1527,6 +1537,36 @@ static void Test_TimerAvailable(void)
 	results.timerAvailable = !(results.via1ACR & 0x20);
 }
 
+// What the Time Manager had in VIA1 timer 2 when a test borrowed it
+static bool borrowedTimerPending;
+static uint16_t borrowedTimerCount;
+
+// Masks the VIA1 timer 2 interrupt and saves the timer state. Call with interrupts disabled.
+static void BorrowTimer(void)
+{
+	via1WriteReg(0x1C00, 0x20);
+	borrowedTimerPending = via1ReadReg(0x1A00) & 0x20;
+	borrowedTimerCount = timerCount();
+}
+
+// Reloads VIA1 timer 2 with what the Time Manager was waiting for, so it still gets its
+// interrupt (late), and restores its interrupt enable. Call with interrupts disabled.
+static void ReturnTimer(void)
+{
+	if (borrowedTimerPending || borrowedTimerCount == 0)
+	{
+		timerLoad(1);
+	}
+	else
+	{
+		timerLoad(borrowedTimerCount);
+	}
+	if (results.via1IER & 0x20)
+	{
+		via1WriteReg(0x1C00, 0xA0);
+	}
+}
+
 // Tests whether writing to $804 raises the IRQ (the Mac II MMU mode switch code writes
 // the flags back to get a new interrupt), and what $804 reads back afterwards.
 // Done with an empty FIFO, where the original ASC has no IRQ condition of its own.
@@ -1644,6 +1684,70 @@ static void Test_MaskedLatch(void)
 	irqState = DisableIRQ();
 	via2WriteReg(0x1C13, 0x10);
 	via2Handlers()[4] = originalASCIRQHandler;
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+// Tests how VIA2 sees the ASC IRQ line. Fills the FIFO without reading $804, so the
+// full and then the half empty conditions happen with their flags still pending:
+// - a level triggered input flags the IRQ again as soon as it's cleared
+// - an edge triggered input sees the half empty condition only if the ASC pulses its
+//   line for each condition, rather than holding it until $804 is read
+static void Test_IRQLineType(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedLineType = true;
+
+	const bool mono = !results.shouldTestStereo;
+	const bool timerAvailable = results.timerAvailable;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.lineIdleIRQ = via2IRQFlagged();
+
+	for (int i = 0; i < 0x500; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.lineFullIRQ = via2IRQFlagged();
+	clearVIA2IRQ();
+	results.lineIRQAfterClear = via2IRQFlagged();
+
+	// Wait up to about 80 ms for the FIFO to drain past half empty
+	if (timerAvailable)
+	{
+		BorrowTimer();
+		timerStart();
+	}
+	for (uint32_t i = 0; i < 200000; i++)
+	{
+		if (via2ReadReg(0x1A03) & 0x10)
+		{
+			results.lineSecondIRQ = true;
+			break;
+		}
+		if (timerAvailable && timerElapsed() >= 0xF000)
+		{
+			break;
+		}
+	}
+	if (timerAvailable)
+	{
+		results.lineSecondTime = timerElapsed();
+		ReturnTimer();
+	}
+
+	results.lineStatus = ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.lineIRQAfterRead = via2IRQFlagged();
+
 	RestoreIRQ(irqState);
 	FinishIRQLineTest(&saved);
 }
@@ -1833,6 +1937,10 @@ int main(void)
 		out("MaskedLatch %d: %d $%02X $%02X %d $%02X %u\n", results.testedMaskedLatch,
 				results.maskedFlagAfterFill, results.maskedIFRAfterFill, results.maskedStatus,
 				results.maskedFlagAfterRead, results.maskedIFRAfterEnable, results.maskedIRQCount);
+		out("IRQLine %d: %d %d %d %d (%u) $%02X %d\n", results.testedLineType,
+				results.lineIdleIRQ, results.lineFullIRQ, results.lineIRQAfterClear,
+				results.lineSecondIRQ, results.lineSecondTime, results.lineStatus,
+				results.lineIRQAfterRead);
 	}
 	else
 	{
