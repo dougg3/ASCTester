@@ -91,6 +91,11 @@ struct LevelResult
 	uint16_t times[LEVEL_CHANGES];			// When it changed, in VIA ticks after the first write
 };
 
+// Values written to $806, in order. The System 7.5 check for the $BB variant writes $00,
+// then $EE, and expects $EE back.
+#define REG806_WRITES 5
+static const uint8_t reg806Values[REG806_WRITES] = { 0x00, 0xEE, 0xFF, 0x55, 0xAA };
+
 // Test results
 struct TestResults
 {
@@ -234,6 +239,9 @@ struct TestResults
 	bool gateFlagMode0;						// VIA2 flagged it again after switching to mode 0 and clearing the flag
 	bool gateFlagMode1;						// VIA2 flagged it again after switching back to FIFO mode
 	uint8_t gateStatus;						// $804 read at the end, never read before
+	uint8_t reg806Initial;					// $806 before the test
+	uint8_t reg806Readback[REG806_WRITES];	// $806 read right after writing each of reg806Values
+	uint8_t reg806Restored;					// $806 read after writing the initial value back
 };
 
 static void DisableASCVBLTask(void);
@@ -267,6 +275,7 @@ static void Test_HalfAck(void);
 static void Test_Reg808(void);
 static void Test_ModeEntry(void);
 static void Test_ModeGate(void);
+static void Test_Reg806(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -296,6 +305,7 @@ static ASCTestFunc tests[] =
 	Test_Reg808,
 	Test_ModeEntry,
 	Test_ModeGate,
+	Test_Reg806,
 	RestoreASCVBLTask,
 };
 
@@ -2459,6 +2469,25 @@ static void Test_ModeGate(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Tests whether $806 (the volume) reads back what was written. System 7.5 checks this
+// on the $BB variant: if writing $00 and then $EE reads back $EE, it reports 'whit' as
+// the sound hardware in Gestalt instead of 'asc ', which loads the sound output component
+// that reads $808. Writes a few values with CPU interrupts off, reading $806 after each,
+// then writes the initial value back.
+static void Test_Reg806(void)
+{
+	const uint16_t irqState = DisableIRQ();
+	results.reg806Initial = ascReadReg(0x806);
+	for (int i = 0; i < REG806_WRITES; i++)
+	{
+		ascWriteReg(0x806, reg806Values[i]);
+		results.reg806Readback[i] = ascReadReg(0x806);
+	}
+	ascWriteReg(0x806, results.reg806Initial);
+	results.reg806Restored = ascReadReg(0x806);
+	RestoreIRQ(irqState);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2693,6 +2722,12 @@ int main(void)
 		out("ModeGate %d (%d): %d, mode 0 %d, mode 1 %d $%02X\n", results.testedModeGate,
 				results.gateUsedHalf, results.gateFlag, results.gateFlagMode0, results.gateFlagMode1,
 				results.gateStatus);
+		out("Reg806 $%02X:", results.reg806Initial);
+		for (int i = 0; i < REG806_WRITES; i++)
+		{
+			out(" $%02X>$%02X", reg806Values[i], results.reg806Readback[i]);
+		}
+		out(", restored $%02X\n", results.reg806Restored);
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];
