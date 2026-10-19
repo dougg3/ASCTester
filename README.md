@@ -15,7 +15,7 @@ Pre-built binaries are provided: ASCTester.dsk is an 800k disk image suitable fo
 
 ## How to use
 
-When you run this program, you should hear a a few blips from the speaker. It may take a while for the tests to complete. Don't move the mouse or press the keyboard during the tests. When it's finished, a window will pop up containing test results.
+When you run this program, you should hear a a few blips from the speaker. It may take a while for the tests to complete. Don't move the mouse or press the keyboard during the tests. When it's finished, a window will pop up containing test results. It also writes the results to a file called "ASCTester Results" next to the app. As the results have gotten bigger, they might not fully fit on screen on models with smaller screens, so the file is most useful for reporting results.
 
 Only use this on a Mac that actually has an ASC or ASC variant. Note that it's very possible this program could hang your machine, so don't have anything important going on at the same time. Ideally, run it immediately after rebooting.
 
@@ -166,89 +166,202 @@ Several tests are counts that display a number other than 0 or 1. **The large nu
 ### Mac IIci
 
 ```
-ASCTester test version 4
+ASCTester test version 5
 BoxFlag: 5   ASC Version: $00   System 7.1.0
 AddrMapFlags: $0000773F
 F09: 0 ($00)  F29: 0 ($00)
 804Idle: $00  M0: 1 M1: 1 M2: 1 ($00)
 Mono: 1 1 Stereo: 1 1
 Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 0 0 (1105 0)
+0 0 1 0 1 0 1 0 1 0 0 0 (1104 0)
 Stereo FIFO Tests:
 0 0 1 1 1 1 1 1 1 1 0 0 (1116 1116)
 VIA2 (1 $0013) 1
 Idle IRQ 0 0 0 (0), 0 0 0 (0), 0 0 0
 FIFO IRQ 1 0 0 0
-(1 1), (1 1), (0 0), (0 0), 1
-2 IRQs (start time = 2756):
-$0A at t =  2756, $05 at t =  2757
+(2 2), (1 1), (0 0), (0 0), 1
+3 IRQs (start time = 3952):
+$0A at t =  3952, $0A at t =  3952, $05 at t =  3953
 Cancel 1 0 1 0 0 $0F 0
+Timer2: 1 (ACR $0C IER $A7)
+StatusWrite 1 (0) repeat 0, clear $00 $00 0:
+$01: 1 $01 $00 0, $02: 1 $02 $00 0, $04: 1 $04 $00 0, $08: 1 $08 $00 0,
+$0F: 1 $0F $00 0, $10: 0 $00 $00 0, $80: 0 $00 $00 0, $00: 0 $00 $00 0
+MaskedLatch 1 (0): 1 $11 $0A 1 $91 1
+IRQLine 1: 0 1 0 0 (61449) $0F 0
+Threshold 1 (0): 8983 8999 9016, refill 9010 9011 9012
+Samples to half: 255.20 255.65 256.14
+Full: writes 1142 1142, level 1023.76 1023.77 1023.79
+HalfAck 1: 0 0 $00 1 (6970) 0 $05 0 $00, F29 0 0, refill 0 $00 1 (8337) $05
+Reg808 1: idle $00 $00 $00, full 1 $00 $00, half 0 (61448) $00 $00 $0F
+ModeEntry 1: 0>1 0 $00, 1>1 0 $00, 2>1 0 $00,
+0>1+clear 0 $00, 0+clear 0 $00, 0>1 above half 0 $00,
+0+clear>1 0 $00
+ModeGate 1 (0): 1, mode 0 0, mode 1 0 $0A
+Reg806 $60: $00>$00 $EE>$E0 $FF>$E0 $55>$40 $AA>$A0, restored $60
+Levels A: $00 $02 (1167), $00@1180, $01@19188, $00@19201
+Levels B: $00 $08 (1648), $00@1661, $04@19639, $00@19652
+Levels AB: $00 $0A (2291), $00@2307, $05@20306, $00@20319
 ```
 
-Note: Sometimes the second pair underneath FIFO IRQ is (2 1) instead of (1 1).
+Note: The FIFO IRQ results sometimes vary slightly on this machine slightly. The existing tests might need to be tweaked to make it more repeatable.
 
 ### LC
 
 ```
-ASCTester test version 4
+ASCTester test version 5
 BoxFlag: 13   ASC Version: $E8   System 7.1.0
 AddrMapFlags: $0000773F
 F09: 0 ($00)  F29: 0 ($00)
 804Idle: $03  M0: 0 M1: 1 M2: 0 ($01)
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 1 0 (1190 0)
+0 0 1 0 1 0 1 0 1 0 1 0 (1196 0)
 VIA2 (1 $0013) 1
 Idle IRQ 1 1 1 (50000), 0 0 0 (0), 0 0 0
 FIFO IRQ 1 1 0 0
-(0 0), (528 528), (50000 50000), (0 0), 0
-50528 IRQs (start time = 2497):
-$01 at t =  2499, $01 at t =  2499, $01 at 4 =  2499, $01 at t =  2499,
-$01 at t =  2499, $01 at t =  2499, $01 at 4 =  2499, $01 at t =  2499,
-$01 at t =  2499, $01 at t =  2499, $01 at 4 =  2499, $01 at t =  2499, ...
+(0 0), (536 536), (50000 50000), (0 0), 0
+50536 IRQs (start time = 1908):
+$01 at t =  1910, $01 at t =  1910, $01 at t =  1910, $01 at t =  1910,
+$01 at t =  1910, $01 at t =  1910, $01 at t =  1910, $01 at t =  1910,
+$01 at t =  1910, $01 at t =  1910, $01 at t =  1910, $01 at t =  1910, ...
 Cancel 0 0 0 0 0 $00 0
+Timer2: 1 (ACR $0C IER $A6)
+StatusWrite 1 (1) repeat 1, clear $03 $03 1:
+$01: 1 $03 $03 1, $02: 1 $03 $03 1, $04: 1 $03 $03 1, $08: 1 $03 $03 1,
+$0F: 1 $03 $03 1, $10: 1 $03 $03 1, $80: 1 $03 $03 1, $00: 1 $03 $03 1
+MaskedLatch 1 (1): 1 $92 $01 1 $92 50000
+IRQLine 1: 1 0 0 1 (17944) $01 1
+Threshold 1 (0): 9061 9085 9104, refill 9009 9010 9011
+Samples to half: 257.44 258.13 258.67
+Full: writes 1271 1272, level 1021.06 1021.45 1022.11
+HalfAck 1: 1 0 $00 1 (5295) 1 $01 1 $01, F29 0 0, refill 0 $00 1 (7736) $01
+Reg808 1: idle $00 $00 $03, full 0 $00 $00, half 1 (17975) $00 $00 $01
+ModeEntry 1: 0>1 1 $03, 1>1 1 $03, 2>1 1 $03,
+0>1+clear 1 $03, 0+clear 1 $03, 0>1 above half 0 $00,
+0+clear>1 1 $03
+ModeGate 1 (1): 1, mode 0 1, mode 1 1 $01
+Reg806 $60: $00>$00 $EE>$E0 $FF>$E0 $55>$40 $AA>$A0, restored $60
+Levels A: $03 $02 (2357), $00@2384, $01@20365, $03@38318
+```
+
+### LC II
+
+```
+ASCTester test version 5
+BoxFlag: 31   ASC Version: $E8   System 7.1.0
+AddrMapFlags: $0000773F
+F09: 0 ($00)  F29: 0 ($00)
+804Idle: $03  M0: 0 M1: 1 M2: 0 ($01)
+Mono: 1 1 Stereo: 0 0
+Mono FIFO Tests:
+0 0 1 0 1 0 1 0 1 0 1 0 (1149 0)
+VIA2 (1 $0013) 1
+Idle IRQ 1 1 1 (50000), 0 0 0 (0), 0 0 0
+FIFO IRQ 1 1 0 0
+(0 0), (591 591), (50000 50000), (0 0), 0
+50591 IRQs (start time = 3766):
+$01 at t =  3768, $01 at t =  3768, $01 at t =  3768, $01 at t =  3768,
+$01 at t =  3768, $01 at t =  3768, $01 at t =  3768, $01 at t =  3768,
+$01 at t =  3768, $01 at t =  3768, $01 at t =  3768, $01 at t =  3768, ...
+Cancel 0 0 0 0 0 $00 0
+Timer2: 1 (ACR $0C IER $A6)
+StatusWrite 1 (1) repeat 1, clear $03 $03 1:
+$01: 1 $03 $03 1, $02: 1 $03 $03 1, $04: 1 $03 $03 1, $08: 1 $03 $03 1,
+$0F: 1 $03 $03 1, $10: 1 $03 $03 1, $80: 1 $03 $03 1, $00: 1 $03 $03 1
+MaskedLatch 1 (1): 1 $10 $01 1 $90 50000
+IRQLine 1: 1 0 0 1 (17962) $01 1
+Threshold 1 (0): 9054 9078 9099, refill 9009 9010 9012
+Samples to half: 257.25 257.93 258.52
+Full: writes 1200 1201, level 1021.00 1021.42 1021.92
+HalfAck 1: 1 0 $00 1 (4812) 1 $01 1 $01, F29 0 0, refill 0 $00 1 (8059) $01
+Reg808 1: idle $00 $00 $03, full 0 $00 $00, half 1 (17994) $00 $00 $01
+ModeEntry 1: 0>1 1 $03, 1>1 1 $03, 2>1 1 $03,
+0>1+clear 1 $03, 0+clear 1 $03, 0>1 above half 0 $00,
+0+clear>1 1 $03
+ModeGate 1 (1): 1, mode 0 1, mode 1 1 $01
+Reg806 $60: $00>$00 $EE>$E0 $FF>$E0 $55>$40 $AA>$A0, restored $60
+Levels A: $03 $02 (1865), $00@1890, $01@19858, $03@37829
 ```
 
 ### LC III
 
 ```
-ASCTester test version 4
+ASCTester test version 5
 BoxFlag: 21   ASC Version: $BC   System 7.1.0
 AddrMapFlags: $0000773F
 F09: 1 ($01)  F29: 1 ($01)
 804Idle: $0E  M0: 0 M1: 1 M2: 0 ($01)
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1 (0 1136)
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1127)
 VIA2 (1 $001F) 1
 Idle IRQ 0 0 0 (0), 1 1 1 (50000), 1 1 1
 FIFO IRQ 1 0 0 0
-(0 0), (1199 1199), (50000 50000), (0 0), 0
-51199 IRQs (start time = 4577):
-$06 at t =  4579, $06 at t =  4579, $06 at t =  4579, $06 at t =  4579,
-$06 at t =  4579, $06 at t =  4579, $06 at t =  4579, $06 at t =  4579,
-$06 at t =  4579, $06 at t =  4579, $06 at t =  4579, $06 at t =  4579, ...
+(0 0), (1105 1105), (50000 50000), (0 0), 0
+51105 IRQs (start time = 1703):
+$06 at t =  1705, $06 at t =  1705, $06 at t =  1705, $06 at t =  1705,
+$06 at t =  1705, $06 at t =  1705, $06 at t =  1705, $06 at t =  1705,
+$06 at t =  1705, $06 at t =  1705, $06 at t =  1705, $06 at t =  1705, ...
 Cancel 0 0 0 0 0 $00 0
+Timer2: 1 (ACR $0C IER $A6)
+StatusWrite 1 (1) repeat 1, clear $0E $0E 1:
+$01: 1 $0E $0E 1, $02: 1 $0E $0E 1, $04: 1 $0E $0E 1, $08: 1 $0E $0E 1,
+$0F: 1 $0E $0E 1, $10: 1 $0E $0E 1, $80: 1 $0E $0E 1, $00: 1 $0E $0E 1
+MaskedLatch 1 (1): 1 $92 $06 1 $92 50000
+IRQLine 1: 1 0 0 1 (17996) $06 1
+Threshold 1 (0): 9053 9067 9085, refill 9010 9010 9012
+Samples to half: 257.22 257.61 258.13
+Full: writes 1131 1132, level 1021.25 1021.68 1022.25
+HalfAck 1: 1 0 $02 1 (6783) 1 $06 1 $06, F29 0 1, refill 0 $02 1 (8348) $06
+Reg808 1: idle $00 $00 $0E, full 0 $00 $00, half 1 (18002) $00 $00 $06
+ModeEntry 1: 0>1 1 $0E, 1>1 1 $0E, 2>1 1 $0E,
+0>1+clear 1 $0E, 0+clear 1 $0E, 0>1 above half 0 $02,
+0+clear>1 1 $0E
+ModeGate 1 (1): 1, mode 0 1, mode 1 1 $06
+Reg806 $E0: $00>$00 $EE>$E0 $FF>$E0 $55>$40 $AA>$A0, restored $E0
+Levels A: $0E $0A (1168), $02@1181, $06@19170, $0E@37123
+Levels B: $0E $0A (1651), $02@1664, $06@19652, $0E@37602
+Levels AB: $0E $0A (2139), $02@2164, $06@20153, $0E@38103
 ```
 
 ### LC 475
 
 ```
-ASCTester test version 4
+ASCTester test version 5
 BoxFlag: 83   ASC Version: $BB   System 7.5.3
 AddrMapFlags: $0500183F
 F09: 1 ($01)  F29: 1 ($01)
 804Idle: $0E  M0: 1 M1: 1 M2: 0 ($01)
 Mono: 1 0 Stereo: 0 1
 Stereo FIFO Tests:
-1 0 1 1 1 1 0 1 0 1 1 1 (0 1104)
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1111)
 VIA2 (1 $0000) 1
 Idle IRQ 0 0 0 (0), 1 0 0 (1), 1 0 0
 FIFO IRQ 1 0 0 0
 (0 0), (1 1), (0 0), (0 0), 0
-1 IRQs (start time = 2614):
-$06 at t =  2615
+1 IRQs (start time = 4957):
+$06 at t =  4958
 Cancel 1 0 1 0 0 $0E 0
+Timer2: 1 (ACR $0C IER $A6)
+StatusWrite 1 (0) repeat 0, clear $0E $0E 0:
+$01: 0 $0E $0E 0, $02: 0 $0E $0E 0, $04: 0 $0E $0E 0, $08: 0 $0E $0E 0,
+$0F: 0 $0E $0E 0, $10: 0 $0E $0E 0, $80: 0 $0E $0E 0, $00: 0 $0E $0E 0
+MaskedLatch 1 (1): 1 $92 $06 1 $92 1
+IRQLine 1: 0 0 0 1 (18004) $06 0
+Threshold 1 (0): 8990 9004 9019, refill 9010 9011 9012
+Samples to half: 255.40 255.80 256.22
+Full: writes 1112 1113, level 1022.97 1023.69 1023.94
+HalfAck 1: 0 0 $02 1 (7783) 0 $06 0 $06, F29 0 1, refill 0 $02 1 (8556) $06
+Reg808 1: idle $00 $00 $0E, full 0 $00 $00, half 1 (18007) $00 $00 $06
+ModeEntry 1: 0>1 0 $0E, 1>1 0 $0E, 2>1 0 $0E,
+0>1+clear 0 $0E, 0+clear 0 $0E, 0>1 above half 0 $02,
+0+clear>1 0 $0E
+ModeGate 1 (1): 1, mode 0 0, mode 1 0 $06
+Reg806 $60: $00>$00 $EE>$E0 $FF>$E0 $55>$40 $AA>$A0, restored $60
+Levels A: $0E $0A (1100), $02@1111, $06@19097, $0E@37117
+Levels B: $0E $0A (1323), $02@1333, $06@19318, $0E@37343
+Levels AB: $0E $0A (1584), $02@1615, $06@19600, $0E@37625
 ```
 
 ## Older results needing a re-test with the latest version
@@ -395,19 +508,6 @@ Note: The 4086 will likely vary on different runs. The important thing is that i
 
 ```
 BoxFlag: 17   ASC Version: $E0
-F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
-Mono: 1 1 Stereo: 0 0
-Mono FIFO Tests:
-0 0 1 0 1 0 1 0 1 0 1 0
-VIA2 $0013 1
-IRQ 1 1 1 0 0 0
-FIFO IRQ 1 1 0 1 0 0 0 0
-```
-
-### LC II
-
-```
-BoxFlag: 31   ASC Version: $E8
 F29Exists: 0  804Idle: $03  M0: 0 M1: 1 M2: 0
 Mono: 1 1 Stereo: 0 0
 Mono FIFO Tests:
