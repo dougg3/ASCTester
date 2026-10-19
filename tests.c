@@ -2601,7 +2601,7 @@ int main(void)
 		DoTests();
 	}
 
-	out("ASCTester test version 5 (draft)\n");
+	out("ASCTester test version 5\n");
 
 	if (ascExists && (via2Exists || rbvExists))
 	{
