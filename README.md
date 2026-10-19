@@ -568,3 +568,23 @@ VIA2 $0000 1
 IRQ 0 0 0 1 0 0
 FIFO IRQ 1 0 0 1 0 0 0 0
 ```
+
+### Performa 5200
+
+```
+ASCTester test version 3
+
+BoxFlag: 35   ASC Version: $BB   System 8.5.1
+AddrMapFlags: $8100183F
+F09: 1 ($01)  F29: 1 ($01)
+804Idle: $0E  M0: 1 M1: 1 M2: 0 ($01)
+Mono: 1 0 Stereo: 1 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1168)
+VIA2 (1 $00000) 1
+Idle IRQ 0 0 0 (0), 1 0 0 (1), 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0), 0
+1 IRQs (start time = 40738):
+$06 at t = 40740
+```
