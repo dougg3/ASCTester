@@ -1,9 +1,20 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdarg.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <Gestalt.h>
+#include <Files.h>
+#ifdef SIMPLE_CONSOLE
+#include <Quickdraw.h>
+#include <Fonts.h>
+#include <Windows.h>
+#include <Events.h>
+
+QDGlobals qd;
+#endif
 #include "asctester.h"
 
 // How many IRQs we receive before we consider it "flooding"
@@ -34,6 +45,50 @@ struct FIFOTestResults
 											// to indicate that FIFO B is completely empty
 	uint32_t aFullCount;					// Number of samples written to FIFO A before it's marked as full
 	uint32_t bFullCount;					// Number of samples written to FIFO B before it's marked as full
+};
+
+// Values written to $804 by the status write test
+static const uint8_t statusWriteValues[] = { 0x01, 0x02, 0x04, 0x08, 0x0F, 0x10, 0x80, 0x00 };
+#define STATUS_WRITE_COUNT					(sizeof(statusWriteValues) / sizeof(statusWriteValues[0]))
+
+// Results for one value written to $804
+struct StatusWriteResult
+{
+	bool irqAfterWrite;						// An ASC IRQ was flagged in VIA2 after the write
+	uint8_t readback;						// First read of $804 after the write
+	uint8_t readbackAgain;					// Second read of $804 after the write
+	bool irqAfterRead;						// The VIA2 flag came back after clearing it, after reading $804
+};
+
+// Number of trials and sample counts for the half empty threshold test
+#define THRESHOLD_TRIALS					16
+#define THRESHOLD_FILL						0x300
+#define THRESHOLD_REFILL					0x100
+
+// Cases of the mode entry test
+#define MODE_ENTRY_CASES					7
+
+// What a mode change or FIFO clear left
+struct ModeEntryResult
+{
+	bool flag;								// VIA2 flagged an ASC interrupt
+	uint8_t status;							// $804 read after that
+};
+
+// FIFOs filled by the status levels test, and how many $804 changes it records for each
+#define LEVEL_CHANNELS						3
+#define LEVEL_CHANGES						10
+
+// $804 as one FIFO (or both) fills up and drains
+struct LevelResult
+{
+	bool tested;							// True if this FIFO was tested
+	uint8_t before;							// $804 right before the first write into an empty FIFO
+	uint8_t afterFill;						// $804 right after writing $500 samples
+	uint16_t fillTime;						// When that was, in VIA ticks after the first write
+	uint8_t count;							// Number of changes recorded after that
+	uint8_t values[LEVEL_CHANGES];			// $804 after each change
+	uint16_t times[LEVEL_CHANGES];			// When it changed, in VIA ticks after the first write
 };
 
 // Test results
@@ -104,6 +159,81 @@ struct TestResults
 	bool cancelIRQAfterWait;				// True if an IRQ was still flagged in VIA2 after we enabled IRQs and waited 10 seconds
 	uint8_t cancelIRQFinalStatus;			// Final status read from reg 0x804 after the cancel test
 	volatile uint32_t cancelIRQCount;		// Count of IRQs we observed during the cancel test
+	bool timerAvailable;					// VIA1 timer 2 is free to use as a stopwatch
+	uint8_t via1ACR;						// VIA1 ACR when checking timer 2
+	uint8_t via1IER;						// VIA1 IER when checking timer 2
+	bool testedStatusWrite;					// True if we ran the status write test
+	bool statusWriteIRQBefore;				// An ASC IRQ was flagged in VIA2 right after clearing it, before any write
+	uint8_t fifoClearStatus;				// $804 read right after a FIFO clear (bit 7 of $803)
+	uint8_t fifoClearStatusAgain;			// $804 read again after that
+	bool fifoClearIRQ;						// An ASC IRQ was flagged in VIA2 after the FIFO clear
+	struct StatusWriteResult statusWrite[STATUS_WRITE_COUNT];
+	bool statusWriteRepeatIRQ;				// A second write of $01, with the first one not read back yet, flagged an IRQ again
+	bool testedMaskedLatch;					// True if we ran the masked latch test
+	bool maskedUsedHalf;					// The masked latch test used the half empty condition (no full IRQ)
+	bool maskedFlagAfterFill;				// VIA2 IFR bit 4 was set after the FIFO filled up with the ASC masked in IER
+	uint8_t maskedIFRAfterFill;				// VIA2 IFR at that point
+	uint8_t maskedStatus;					// $804 read after that, which releases the original ASC's IRQ line
+	bool maskedFlagAfterRead;				// VIA2 IFR bit 4 was still set after that read
+	uint8_t maskedIFRAfterEnable;			// VIA2 IFR after enabling the ASC in IER, CPU interrupts still off
+	volatile uint32_t maskedIRQCount;		// IRQs taken after turning CPU interrupts back on
+	bool testedLineType;					// True if we ran the IRQ line type test
+	bool lineIdleIRQ;						// An ASC IRQ was flagged in VIA2 right after clearing it, before filling the FIFO
+	bool lineFullIRQ;						// An ASC IRQ was flagged in VIA2 after filling the FIFO
+	bool lineIRQAfterClear;					// The VIA2 flag came back right after clearing it, with $804 not read yet
+	bool lineSecondIRQ;						// The VIA2 flag came back later while the FIFO drained, with $804 not read yet
+	uint16_t lineSecondTime;				// When the second flag appeared, in VIA ticks after clearing the first one
+	uint8_t lineStatus;						// $804 read after waiting for the second flag
+	bool lineIRQAfterRead;					// The VIA2 flag came back after clearing it, after reading $804
+	bool testedThreshold;					// True if we ran the half empty threshold test
+	uint8_t thresholdFailures;				// Number of trials where a flag never showed up in time
+	uint16_t thresholdFirstMin;				// Shortest time from the first write into an empty FIFO to the half empty flag
+	uint16_t thresholdFirstMax;				// Longest time from the first write into an empty FIFO to the half empty flag
+	uint16_t thresholdRefillMin;			// Shortest time between the two half empty flags around a refill
+	uint16_t thresholdRefillMax;			// Longest time between the two half empty flags around a refill
+	uint32_t thresholdRefillSum;			// Sum of the times between the two half empty flags
+	uint16_t thresholdFirstAvg;				// Average time from the first write into an empty FIFO to the half empty flag
+	uint16_t thresholdRefillAvg;			// Average time between the two half empty flags (THRESHOLD_REFILL sample periods)
+	uint16_t fullWritesMin;					// Fewest writes into an empty FIFO before the full flag
+	uint16_t fullWritesMax;					// Most writes into an empty FIFO before the full flag
+	int32_t fullLevelMin;					// Lowest estimated FIFO level at the full flag, in 1/100 samples
+	int32_t fullLevelMax;					// Highest estimated FIFO level at the full flag, in 1/100 samples
+	int32_t fullLevelAvg;					// Average estimated FIFO level at the full flag, in 1/100 samples
+	struct LevelResult levels[LEVEL_CHANNELS];	// Status levels test: FIFO A, FIFO B, both (stereo only)
+	bool testedHalfAck;						// True if we ran the half empty acknowledge test
+	bool ackFlagBefore;						// An ASC IRQ was flagged in VIA2 after reading $804 and clearing it, before the fill
+	bool ackFlagAfterFill;					// An ASC IRQ was flagged in VIA2 after filling the FIFO above half
+	uint8_t ackFillStatus;					// $804 read right after the fill, which releases the line
+	bool ackHalfFlag;						// An ASC IRQ was flagged in VIA2 as the FIFO drained past half empty
+	uint16_t ackHalfTime;					// When that was, in VIA ticks after the fill
+	bool ackFlagAfterClear;					// The VIA2 flag came back right after clearing it, with $804 not read
+	uint8_t ackStatus;						// $804 read after that
+	bool ackFlagAfterRead;					// The VIA2 flag came back after clearing it, after reading $804
+	uint8_t ackStatusAgain;					// $804 read again
+	bool ackFlagAfterF29Off;				// The VIA2 flag came back after writing 1 to F29
+	bool ackFlagAfterF29On;					// The VIA2 flag came back after writing 0 to F29, below half empty
+	bool ackFlagAfterRefill;				// An ASC IRQ was flagged in VIA2 after refilling the FIFO above half
+	uint8_t ackRefillStatus;				// $804 read right after the refill
+	bool ackSecondFlag;						// An ASC IRQ was flagged in VIA2 as the FIFO drained past half empty again
+	uint16_t ackSecondTime;					// When that was, in VIA ticks after the refill
+	uint8_t ackFinalStatus;					// $804 read at the end
+	bool testedReg808;						// True if we ran the $808 test
+	uint8_t reg808Idle[2];					// Two reads of $808 with no flags in $804
+	uint8_t reg808IdleStatus;				// $804 read after that
+	bool reg808FullFlag;					// An ASC IRQ was flagged in VIA2 after filling the FIFO up
+	uint8_t reg808Full[2];					// Two reads of $808 after that, $804 not read
+	bool reg808Edge;						// VIA2 flagged the ASC again as the FIFO drained past half empty, $804 still not read
+	uint16_t reg808EdgeTime;				// When that was, in VIA ticks after clearing the flag
+	uint8_t reg808Half[2];					// Two reads of $808 after that
+	uint8_t reg808Status;					// $804 read at the end: the flags the $808 reads left
+	bool testedModeEntry;					// True if we ran the mode entry test
+	struct ModeEntryResult modeEntry[MODE_ENTRY_CASES];
+	bool testedModeGate;					// True if we ran the mode gate test
+	bool gateUsedHalf;						// The test used the half empty condition (no full IRQ)
+	bool gateFlag;							// VIA2 flagged the ASC after the FIFO condition
+	bool gateFlagMode0;						// VIA2 flagged it again after switching to mode 0 and clearing the flag
+	bool gateFlagMode1;						// VIA2 flagged it again after switching back to FIFO mode
+	uint8_t gateStatus;						// $804 read at the end, never read before
 };
 
 static void DisableASCVBLTask(void);
@@ -127,6 +257,17 @@ static void Test_FIFOIRQ_WhileFull(void);
 
 static void Test_CancelIRQ(void);
 
+static void Test_TimerAvailable(void);
+static void Test_StatusWrite(void);
+static void Test_MaskedLatch(void);
+static void Test_IRQLineType(void);
+static void Test_HalfEmptyThreshold(void);
+static void Test_StatusLevels(void);
+static void Test_HalfAck(void);
+static void Test_Reg808(void);
+static void Test_ModeEntry(void);
+static void Test_ModeGate(void);
+
 // List of all tests
 static ASCTestFunc tests[] =
 {
@@ -145,6 +286,16 @@ static ASCTestFunc tests[] =
 	Test_FIFOIRQ,
 	Test_FIFOIRQ_WhileFull,
 	Test_CancelIRQ,
+	Test_TimerAvailable,
+	Test_StatusWrite,
+	Test_MaskedLatch,
+	Test_IRQLineType,
+	Test_HalfEmptyThreshold,
+	Test_StatusLevels,
+	Test_HalfAck,
+	Test_Reg808,
+	Test_ModeEntry,
+	Test_ModeGate,
 	RestoreASCVBLTask,
 };
 
@@ -1367,6 +1518,947 @@ static void Test_CancelIRQ(void)
 	results.cancelIRQFinalStatus = finalStatus;
 }
 
+// ASC and VIA2 state saved by PrepareIRQLineTest
+struct SavedASCState
+{
+	uint8_t mode;
+	uint8_t control;
+	bool irqEnabledInVIA2;
+	uint8_t f09;
+	uint8_t f29;
+};
+
+// Writes one sample to FIFO A, or to both FIFOs in stereo
+static void writeSample(bool mono, uint8_t sample)
+{
+	if (mono)
+	{
+		ascWriteReg(0x0, sample);
+	}
+	else
+	{
+		ascWriteStereoSample(sample);
+	}
+}
+
+// Returns the half empty (bit 0) and full/empty (bit 1) status of the FIFO the IRQ tests use
+static uint8_t fifoStatus(uint8_t status)
+{
+	if (!results.fifoIRQTestedWasA)
+	{
+		status >>= 2;
+	}
+	return status & 0x03;
+}
+
+// Clears the ASC flag in VIA2's IFR
+static void clearVIA2IRQ(void)
+{
+	via2WriteReg(0x1A03, 0x90);
+}
+
+// Returns whether the ASC is flagged in VIA2's IFR, after giving VIA2 a few cycles to see the line
+static bool via2IRQFlagged(void)
+{
+	for (int i = 0; i < 4; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+	return via2ReadReg(0x1A03) & 0x10;
+}
+
+// Puts the ASC in FIFO mode with its IRQ masked in VIA2, so that the tests can poll VIA2's IFR.
+// Enables F29 if it exists, like the other FIFO IRQ tests.
+static void PrepareIRQLineTest(bool mono, SavedASCState *s)
+{
+	const uint16_t irqState = DisableIRQ();
+	s->mode = ascReadReg(0x801);
+	s->control = ascReadReg(0x802);
+	s->irqEnabledInVIA2 = via2ReadReg(0x1C13) & 0x10;
+	s->f09 = results.regF09Exists ? ascReadReg(0xF09) : 0;
+	s->f29 = results.regF29Exists ? ascReadReg(0xF29) : 0;
+
+	via2WriteReg(0x1C13, 0x10);
+	ascWriteReg(0x801, 1);
+	if (mono)
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) & ~0x02);
+	}
+	else
+	{
+		ascWriteReg(0x802, ascReadReg(0x802) | 0x02);
+	}
+	if (results.regF09Exists)
+	{
+		// Leave F09 disabled; on newer variants it's related to recording instead of playback.
+		ascWriteReg(0xF09, 1);
+	}
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, 0);
+	}
+	RestoreIRQ(irqState);
+}
+
+// Undoes PrepareIRQLineTest
+static void FinishIRQLineTest(const SavedASCState *s)
+{
+	const uint16_t irqState = DisableIRQ();
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, s->f09);
+	}
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, s->f29);
+	}
+	ascWriteReg(0x802, s->control);
+	ascWriteReg(0x801, s->mode);
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	via2WriteReg(0x1C13, s->irqEnabledInVIA2 ? 0x90 : 0x10);
+	RestoreIRQ(irqState);
+}
+
+// Clears the FIFO and waits long enough for it to be empty in any case
+static void EmptyFIFO(void)
+{
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+
+	const uint32_t startTicks = ticks();
+	while (ticks() - startTicks < 4)
+	{
+	}
+}
+
+// Checks that VIA1 timer 2 counts clock pulses, so it can be used as a stopwatch.
+// Mac OS has its interrupt enabled, so the tests only borrow it with interrupts off.
+static void Test_TimerAvailable(void)
+{
+	results.via1ACR = via1ReadReg(0x1600);
+	results.via1IER = via1ReadReg(0x1C00);
+	results.timerAvailable = !(results.via1ACR & 0x20);
+}
+
+// What the Time Manager had in VIA1 timer 2 when a test borrowed it
+static bool borrowedTimerPending;
+static uint16_t borrowedTimerCount;
+
+// Masks the VIA1 timer 2 interrupt and saves the timer state. Call with interrupts disabled.
+static void BorrowTimer(void)
+{
+	via1WriteReg(0x1C00, 0x20);
+	borrowedTimerPending = via1ReadReg(0x1A00) & 0x20;
+	borrowedTimerCount = timerCount();
+}
+
+// Reloads VIA1 timer 2 with what the Time Manager was waiting for, so it still gets its
+// interrupt (late), and restores its interrupt enable. Call with interrupts disabled.
+static void ReturnTimer(void)
+{
+	if (borrowedTimerPending || borrowedTimerCount == 0)
+	{
+		timerLoad(1);
+	}
+	else
+	{
+		timerLoad(borrowedTimerCount);
+	}
+	if (results.via1IER & 0x20)
+	{
+		via1WriteReg(0x1C00, 0xA0);
+	}
+}
+
+// Tests whether writing to $804 raises the IRQ (the Mac II MMU mode switch code writes
+// the flags back to get a new interrupt), and what $804 reads back afterwards.
+// Done with an empty FIFO, where the original ASC has no IRQ condition of its own.
+static void Test_StatusWrite(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedStatusWrite = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.statusWriteIRQBefore = via2IRQFlagged();
+
+	// What a FIFO clear leaves in $804
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	results.fifoClearIRQ = via2IRQFlagged();
+	results.fifoClearStatus = ascReadReg(0x804);
+	results.fifoClearStatusAgain = ascReadReg(0x804);
+
+	for (size_t i = 0; i < STATUS_WRITE_COUNT; i++)
+	{
+		StatusWriteResult *w = &results.statusWrite[i];
+
+		(void)ascReadReg(0x804);
+		clearVIA2IRQ();
+		ascWriteReg(0x804, statusWriteValues[i]);
+		w->irqAfterWrite = via2IRQFlagged();
+		w->readback = ascReadReg(0x804);
+		w->readbackAgain = ascReadReg(0x804);
+		clearVIA2IRQ();
+		w->irqAfterRead = via2IRQFlagged();
+	}
+
+	// Write the same flag twice without reading $804 in between
+	(void)ascReadReg(0x804);
+	ascWriteReg(0x804, 0x01);
+	clearVIA2IRQ();
+	ascWriteReg(0x804, 0x01);
+	results.statusWriteRepeatIRQ = via2IRQFlagged();
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+static void Test_MaskedLatchHandler(void)
+{
+	// Acknowledge the IRQ, but leave $804 alone so the handler only sees what VIA2 latched
+	via2WriteReg(0x1A03, 0x90);
+
+	TestResults *r = resultsFromIRQ();
+	r->maskedIRQCount++;
+
+	// Prevent IRQ floods
+	if (r->maskedIRQCount >= IRQ_FLOOD_TEST_COUNT)
+	{
+		via2WriteReg(0x1C13, 0x10);
+	}
+}
+
+// Tests whether VIA2 (or the chip standing in for it) latches the ASC IRQ in its IFR while
+// the ASC is masked in its IER, whether the flag stays once the ASC releases its line, and
+// whether enabling the ASC afterwards delivers that interrupt. Some of these are Apple ASIC
+// reimplementations of the VIA and may not behave like a 6522.
+// The FIFO filling up raises the original ASC's line and reading $804 releases it. Variants
+// with a level IRQ (V8...) release it only when the FIFO is above half empty instead.
+static void Test_MaskedLatch(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedMaskedLatch = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	uint16_t irqState = DisableIRQ();
+	VIA2Handler originalASCIRQHandler = via2Handlers()[4];
+	*(TestResults **)ApplScratch = &results;
+	via2Handlers()[4] = Test_MaskedLatchHandler;
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+
+	// Without a full interrupt, fill above half and wait for the half empty condition instead
+	results.maskedUsedHalf = results.fullIRQCount == 0;
+	if (results.maskedUsedHalf)
+	{
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		for (uint32_t i = 0; i < 200000; i++)
+		{
+			if (via2ReadReg(0x1A03) & 0x10)
+			{
+				break;
+			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 0x500; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+	}
+	results.maskedFlagAfterFill = via2IRQFlagged();
+	results.maskedIFRAfterFill = via2ReadReg(0x1A03);
+	results.maskedStatus = ascReadReg(0x804);
+	results.maskedFlagAfterRead = via2IRQFlagged();
+
+	via2WriteReg(0x1C13, 0x90);
+	results.maskedIFRAfterEnable = via2ReadReg(0x1A03);
+	RestoreIRQ(irqState);
+
+	// Give a pending interrupt time to be taken. The FIFO drains past half empty
+	// after about 23 ms, so stay well below that.
+	for (int i = 0; i < 200; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+
+	irqState = DisableIRQ();
+	via2WriteReg(0x1C13, 0x10);
+	via2Handlers()[4] = originalASCIRQHandler;
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+// Tests how VIA2 sees the ASC IRQ line. Fills the FIFO without reading $804, so the
+// full and then the half empty conditions happen with their flags still pending:
+// - a level triggered input flags the IRQ again as soon as it's cleared
+// - an edge triggered input sees the half empty condition only if the ASC pulses its
+//   line for each condition, rather than holding it until $804 is read
+static void Test_IRQLineType(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedLineType = true;
+
+	const bool mono = !results.shouldTestStereo;
+	const bool timerAvailable = results.timerAvailable;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.lineIdleIRQ = via2IRQFlagged();
+
+	for (int i = 0; i < 0x500; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.lineFullIRQ = via2IRQFlagged();
+	clearVIA2IRQ();
+	results.lineIRQAfterClear = via2IRQFlagged();
+
+	// Wait up to about 80 ms for the FIFO to drain past half empty
+	if (timerAvailable)
+	{
+		BorrowTimer();
+		timerStart();
+	}
+	for (uint32_t i = 0; i < 200000; i++)
+	{
+		if (via2ReadReg(0x1A03) & 0x10)
+		{
+			results.lineSecondIRQ = true;
+			break;
+		}
+		if (timerAvailable && timerElapsed() >= 0xF000)
+		{
+			break;
+		}
+	}
+	if (timerAvailable)
+	{
+		results.lineSecondTime = timerElapsed();
+		ReturnTimer();
+	}
+
+	results.lineStatus = ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.lineIRQAfterRead = via2IRQFlagged();
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+// Waits a little longer for each trial, so that the trials start at different points
+// of the ASC's sample period (about 1.3 us per VIA access, 45 us per sample)
+static void PhaseDelay(int trial)
+{
+	for (int i = 0; i < trial * 3; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+}
+
+// Polls $804 until the half empty bit is clear and then set again. Returns the
+// VIA tick count at that point, or $FFFF if it doesn't happen.
+static uint16_t WaitHalfEmpty(void)
+{
+	bool sawAboveHalf = false;
+
+	for (uint32_t i = 0; i < 200000; i++)
+	{
+		const uint8_t status = fifoStatus(ascReadReg(0x804));
+		if (!(status & 0x01))
+		{
+			sawAboveHalf = true;
+		}
+		else if (sawAboveHalf)
+		{
+			return timerElapsed();
+		}
+	}
+	return 0xFFFF;
+}
+
+// Measures where the half empty condition happens, using VIA1 timer 2 as a stopwatch:
+// - THRESHOLD_FILL samples written into an empty FIFO, time from the first write to the
+//   half empty flag. The FIFO drains one sample per sample period from the first write,
+//   so this is (THRESHOLD_FILL - level after the half empty condition) sample periods,
+//   minus up to one period for where the first write fell within a sample period.
+// - THRESHOLD_REFILL samples written right after that, time to the next half empty flag.
+//   That is exactly THRESHOLD_REFILL sample periods, which calibrates the period.
+// - Writes into an empty FIFO until the full flag, with the time it took, to estimate the
+//   FIFO level when the full flag sets.
+static void Test_HalfEmptyThreshold(void)
+{
+	if (!results.testedFIFOIRQs || !results.timerAvailable)
+	{
+		return;
+	}
+	results.testedThreshold = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	results.thresholdFirstMin = 0xFFFF;
+	results.thresholdRefillMin = 0xFFFF;
+	results.fullWritesMin = 0xFFFF;
+	uint32_t firstSum = 0;
+	uint32_t refillTrials = 0;
+
+	for (int trial = 0; trial < THRESHOLD_TRIALS; trial++)
+	{
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		(void)ascReadReg(0x804);
+		PhaseDelay(trial);
+		timerStart();
+		for (int i = 0; i < THRESHOLD_FILL; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		const uint16_t first = WaitHalfEmpty();
+		for (int i = 0; i < THRESHOLD_REFILL; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		const uint16_t second = (first == 0xFFFF) ? 0xFFFF : WaitHalfEmpty();
+		ReturnTimer();
+		RestoreIRQ(irqState);
+
+		if (second == 0xFFFF)
+		{
+			results.thresholdFailures++;
+			continue;
+		}
+
+		const uint16_t refill = second - first;
+		if (first < results.thresholdFirstMin)
+		{
+			results.thresholdFirstMin = first;
+		}
+		if (first > results.thresholdFirstMax)
+		{
+			results.thresholdFirstMax = first;
+		}
+		if (refill < results.thresholdRefillMin)
+		{
+			results.thresholdRefillMin = refill;
+		}
+		if (refill > results.thresholdRefillMax)
+		{
+			results.thresholdRefillMax = refill;
+		}
+		firstSum += first;
+		results.thresholdRefillSum += refill;
+		refillTrials++;
+	}
+
+	if (refillTrials == 0)
+	{
+		FinishIRQLineTest(&saved);
+		return;
+	}
+	results.thresholdFirstAvg = firstSum / refillTrials;
+	results.thresholdRefillAvg = results.thresholdRefillSum / refillTrials;
+
+	// VIA ticks per THRESHOLD_REFILL sample periods
+	const int32_t refillTicks = results.thresholdRefillAvg;
+
+	results.fullLevelMin = INT32_MAX;
+	results.fullLevelMax = INT32_MIN;
+	int32_t levelSum = 0;
+	uint32_t fullTrials = 0;
+
+	for (int trial = 0; trial < THRESHOLD_TRIALS; trial++)
+	{
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		(void)ascReadReg(0x804);
+		PhaseDelay(trial);
+		timerStart();
+		uint16_t writes;
+		bool full = false;
+		for (writes = 1; writes <= 0x800; writes++)
+		{
+			writeSample(mono, writes & 0xFF);
+			if (fifoStatus(ascReadReg(0x804)) & 0x02)
+			{
+				full = true;
+				break;
+			}
+		}
+		const uint16_t elapsed = timerElapsed();
+		ReturnTimer();
+		RestoreIRQ(irqState);
+
+		if (!full)
+		{
+			results.thresholdFailures++;
+			continue;
+		}
+
+		const int32_t level = writes * 100 -
+			(int32_t)elapsed * THRESHOLD_REFILL * 100 / refillTicks;
+		if (writes < results.fullWritesMin)
+		{
+			results.fullWritesMin = writes;
+		}
+		if (writes > results.fullWritesMax)
+		{
+			results.fullWritesMax = writes;
+		}
+		if (level < results.fullLevelMin)
+		{
+			results.fullLevelMin = level;
+		}
+		if (level > results.fullLevelMax)
+		{
+			results.fullLevelMax = level;
+		}
+		levelSum += level;
+		fullTrials++;
+	}
+	if (fullTrials)
+	{
+		results.fullLevelAvg = levelSum / (int32_t)fullTrials;
+	}
+
+	FinishIRQLineTest(&saved);
+}
+
+// Fills one FIFO (or both, in stereo) and records each change of $804
+// while it drains, with VIA1 timer 2 as a stopwatch. This shows which bits are levels
+// and which are latched flags (cleared by the reads), and what each bit means. In stereo,
+// FIFO A and FIFO B are filled on their own and then together; in mono, only FIFO A.
+// The FIFO drains while it's being filled, so $500 writes make sure that it ends up full.
+static void Test_StatusLevels(void)
+{
+	if (!results.timerAvailable || (!results.shouldTestMono && !results.shouldTestStereo))
+	{
+		return;
+	}
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
+	{
+		if (mono && channel > 0)
+		{
+			break;
+		}
+		LevelResult *l = &results.levels[channel];
+		l->tested = true;
+
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		l->before = ascReadReg(0x804);
+		timerStart();
+		for (int i = 0; i < 0x500; i++)
+		{
+			if (channel == 0)
+			{
+				ascWriteReg(0x0, i & 0xFF);
+			}
+			else if (channel == 1)
+			{
+				ascWriteReg(0x400, i & 0xFF);
+			}
+			else
+			{
+				ascWriteStereoSample(i & 0xFF);
+			}
+		}
+		l->afterFill = ascReadReg(0x804);
+		l->fillTime = timerElapsed();
+
+		// A full FIFO drains in about 36000 ticks
+		uint8_t last = l->afterFill;
+		while (l->count < LEVEL_CHANGES && timerElapsed() < 0xF000)
+		{
+			const uint8_t status = ascReadReg(0x804);
+			if (status != last)
+			{
+				l->values[l->count] = status;
+				l->times[l->count] = timerElapsed();
+				l->count++;
+				last = status;
+			}
+		}
+		ReturnTimer();
+		RestoreIRQ(irqState);
+	}
+
+	FinishIRQLineTest(&saved);
+}
+
+// Polls VIA2's IFR until the ASC is flagged. With VIA1 timer 2, gives up after about 80 ms
+// and returns when it happened in VIA ticks after timerStart.
+static bool WaitVIA2IRQ(bool timerAvailable, uint16_t *time)
+{
+	for (uint32_t i = 0; i < 200000; i++)
+	{
+		if (via2ReadReg(0x1A03) & 0x10)
+		{
+			if (timerAvailable)
+			{
+				*time = timerElapsed();
+			}
+			return true;
+		}
+		if (timerAvailable && timerElapsed() >= 0xF000)
+		{
+			break;
+		}
+	}
+	if (timerAvailable)
+	{
+		*time = timerElapsed();
+	}
+	return false;
+}
+
+// Tests what releases the half empty interrupt, for variants where $804 holds levels
+// rather than flags cleared by a read. With the ASC masked in VIA2's IER, fills the FIFO
+// above half (but not full), waits for VIA2 to flag the half empty condition, then checks
+// whether the flag comes back after clearing it in VIA2 only, after reading $804, after
+// writing 1 and then 0 to F29, and after refilling the FIFO above half.
+static void Test_HalfAck(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedHalfAck = true;
+
+	const bool mono = !results.shouldTestStereo;
+	const bool timerAvailable = results.timerAvailable;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	if (timerAvailable)
+	{
+		BorrowTimer();
+	}
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.ackFlagBefore = via2IRQFlagged();
+
+	// A sample played while the fill goes through the half level can raise the half empty
+	// condition on the way up, so read $804 after the fill to start from a released line.
+	for (int i = 0; i < 0x300; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.ackFlagAfterFill = via2IRQFlagged();
+	results.ackFillStatus = ascReadReg(0x804);
+	clearVIA2IRQ();
+	if (timerAvailable)
+	{
+		timerStart();
+	}
+	results.ackHalfFlag = WaitVIA2IRQ(timerAvailable, &results.ackHalfTime);
+
+	if (results.ackHalfFlag)
+	{
+		clearVIA2IRQ();
+		results.ackFlagAfterClear = via2IRQFlagged();
+		results.ackStatus = ascReadReg(0x804);
+		clearVIA2IRQ();
+		results.ackFlagAfterRead = via2IRQFlagged();
+		results.ackStatusAgain = ascReadReg(0x804);
+
+		if (results.regF29Exists)
+		{
+			clearVIA2IRQ();
+			ascWriteReg(0xF29, 1);
+			results.ackFlagAfterF29Off = via2IRQFlagged();
+			clearVIA2IRQ();
+			ascWriteReg(0xF29, 0);
+			results.ackFlagAfterF29On = via2IRQFlagged();
+		}
+
+		// The FIFO is below half, so this brings it above half without filling it up
+		clearVIA2IRQ();
+		for (int i = 0; i < 0x100; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		results.ackFlagAfterRefill = via2IRQFlagged();
+		results.ackRefillStatus = ascReadReg(0x804);
+		clearVIA2IRQ();
+		if (timerAvailable)
+		{
+			timerStart();
+		}
+		results.ackSecondFlag = WaitVIA2IRQ(timerAvailable, &results.ackSecondTime);
+	}
+	results.ackFinalStatus = ascReadReg(0x804);
+
+	if (timerAvailable)
+	{
+		ReturnTimer();
+	}
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+// Tests whether $808, which isn't documented, reads like $804 without clearing it.
+// With the ASC masked in VIA2's IER, reads $808 with no flags in $804, then after
+// filling the FIFO up, and again after the FIFO drained past half empty, without ever
+// reading $804, then reads $804 to see which flags the $808 reads left. On the original
+// ASC, the line is held until $804 is read, so the half empty condition only flags VIA2
+// again if reading $808 released it.
+static void Test_Reg808(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedReg808 = true;
+
+	const bool mono = !results.shouldTestStereo;
+	const bool timerAvailable = results.timerAvailable;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	if (timerAvailable)
+	{
+		BorrowTimer();
+	}
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.reg808Idle[0] = ascReadReg(0x808);
+	results.reg808Idle[1] = ascReadReg(0x808);
+	results.reg808IdleStatus = ascReadReg(0x804);
+
+	for (int i = 0; i < 0x500; i++)
+	{
+		writeSample(mono, i & 0xFF);
+	}
+	results.reg808FullFlag = via2IRQFlagged();
+	results.reg808Full[0] = ascReadReg(0x808);
+	results.reg808Full[1] = ascReadReg(0x808);
+
+	clearVIA2IRQ();
+	if (timerAvailable)
+	{
+		timerStart();
+	}
+	results.reg808Edge = WaitVIA2IRQ(timerAvailable, &results.reg808EdgeTime);
+	results.reg808Half[0] = ascReadReg(0x808);
+	results.reg808Half[1] = ascReadReg(0x808);
+	results.reg808Status = ascReadReg(0x804);
+
+	if (timerAvailable)
+	{
+		ReturnTimer();
+	}
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+// Waits a few sample periods (about 1.3 us per VIA access, 45 us per sample)
+static void WaitSamples(void)
+{
+	for (int i = 0; i < 150; i++)
+	{
+		(void)via1ReadReg(0x1E00);
+	}
+}
+
+// Empties the FIFO in FIFO mode, optionally fills it above half, then sets the mode
+// to start from, clears $804 and the VIA2 flag
+static void ModeEntrySetup(bool mono, uint8_t mode, bool fill)
+{
+	ascWriteReg(0x801, 1);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	if (fill)
+	{
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+	}
+	ascWriteReg(0x801, mode);
+	WaitSamples();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+}
+
+// Records whether VIA2 flagged an ASC interrupt a few samples after a mode change or
+// FIFO clear, and what $804 reads
+static void ModeEntryCheck(ModeEntryResult *r)
+{
+	WaitSamples();
+	r->flag = via2IRQFlagged();
+	r->status = ascReadReg(0x804);
+}
+
+// Tests whether entering FIFO mode, or clearing the FIFO, flags anything. The other tests
+// always read $804 right after setting FIFO mode, which would hide it.
+// With the ASC masked in VIA2's IER and CPU interrupts off, from an empty FIFO:
+// - mode 0 to 1, mode 1 to 1 (written again), mode 2 to 1
+// - mode 0 to 1 followed by a FIFO clear, and a FIFO clear alone in mode 0
+// - mode 0 to 1 with the FIFO filled above half before going to mode 0
+// - a FIFO clear in mode 0, then mode 0 to 1, without reading $804 in between
+static void Test_ModeEntry(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedModeEntry = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	const uint16_t irqState = DisableIRQ();
+	ModeEntryResult *r = results.modeEntry;
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[0]);
+
+	ModeEntrySetup(mono, 1, false);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[1]);
+
+	ModeEntrySetup(mono, 2, false);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[2]);
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x801, 1);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	ModeEntryCheck(&r[3]);
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	ModeEntryCheck(&r[4]);
+
+	ModeEntrySetup(mono, 0, true);
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[5]);
+
+	ModeEntrySetup(mono, 0, false);
+	ascWriteReg(0x803, 0x80);
+	ascWriteReg(0x803, 0);
+	WaitSamples();
+	ascWriteReg(0x801, 1);
+	ModeEntryCheck(&r[6]);
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
+// Tests whether a FIFO condition left pending in $804 survives a switch to mode 0 and back,
+// and whether the interrupt output follows the mode. With the ASC masked in VIA2's IER, raises
+// the full condition (the half empty one if the FIFO IRQ test saw no full interrupt), switches
+// to mode 0, clears the VIA2 flag, then switches back to FIFO mode, without reading $804. With
+// an edge triggered VIA2 input, a new flag after switching back means the line was released in
+// mode 0 and asserted again in FIFO mode.
+static void Test_ModeGate(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedModeGate = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+
+	results.gateUsedHalf = results.fullIRQCount == 0;
+	if (results.gateUsedHalf)
+	{
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		(void)ascReadReg(0x804);
+		clearVIA2IRQ();
+		for (uint32_t i = 0; i < 200000; i++)
+		{
+			if (via2ReadReg(0x1A03) & 0x10)
+			{
+				break;
+			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 0x500; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+	}
+	results.gateFlag = via2IRQFlagged();
+
+	ascWriteReg(0x801, 0);
+	WaitSamples();
+	clearVIA2IRQ();
+	results.gateFlagMode0 = via2IRQFlagged();
+
+	clearVIA2IRQ();
+	ascWriteReg(0x801, 1);
+	WaitSamples();
+	results.gateFlagMode1 = via2IRQFlagged();
+	results.gateStatus = ascReadReg(0x804);
+
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -1376,11 +2468,88 @@ void DoTests(void)
 	}
 }
 
+// Everything printed, kept to save it to a file at the end
+static char outText[4096];
+static size_t outLength;
+
+// Prints to the console and keeps a copy for the results file
+static void out(const char *format, ...)
+{
+	char line[256];
+	va_list args;
+
+	va_start(args, format);
+	vsnprintf(line, sizeof(line), format, args);
+	va_end(args);
+
+#ifndef SIMPLE_CONSOLE
+	fputs(line, stdout);
+#endif
+	for (const char *c = line; *c && outLength < sizeof(outText); c++)
+	{
+		outText[outLength++] = (*c == '\n') ? '\r' : *c;
+	}
+}
+
+#ifdef SIMPLE_CONSOLE
+// Shows everything printed in a window, for toolchains where RetroConsole doesn't work.
+// Waits for a click.
+static void ShowResults(void)
+{
+	InitGraf(&qd.thePort);
+	InitFonts();
+	InitWindows();
+	InitCursor();
+
+	Rect bounds = qd.screenBits.bounds;
+	InsetRect(&bounds, 8, 8);
+	bounds.top += 32;
+	WindowPtr window = NewWindow(NULL, &bounds, "\pASCTester", true, documentProc, (WindowPtr)-1, false, 0);
+	SetPort(window);
+	TextFont(kFontIDMonaco);
+	TextSize(9);
+
+	short y = 12;
+	size_t start = 0;
+	for (size_t i = 0; i <= outLength; i++)
+	{
+		if (i == outLength || outText[i] == '\r')
+		{
+			MoveTo(4, y);
+			DrawText(outText, start, i - start);
+			y += 11;
+			start = i + 1;
+		}
+	}
+
+	while (!Button())
+	{
+	}
+}
+#endif
+
+// Saves everything printed to "ASCTester Results" next to the application
+static void SaveResults(void)
+{
+	static const unsigned char name[] = "\pASCTester Results";
+	short refNum;
+
+	(void)FSDelete(name, 0);
+	if (Create(name, 0, 'ttxt', 'TEXT') != noErr || FSOpen(name, 0, &refNum) != noErr)
+	{
+		return;
+	}
+	long count = outLength;
+	(void)FSWrite(refNum, &count, outText);
+	(void)FSClose(refNum);
+	(void)FlushVol(NULL, 0);
+}
+
 // Prints info about a FIFO test (stereo or mono)
 void PrintFIFOTests(const char *title, struct FIFOTestResults const *f)
 {
-	printf("%s:\n", title);
-	printf("%d %d %d %d %d %d %d %d %d %d %d %d (%u %u)\n",
+	out("%s:\n", title);
+	out("%d %d %d %d %d %d %d %d %d %d %d %d (%u %u)\n",
 			f->aFullTooSoon, f->bFullTooSoon,
 			f->aReachesFull, f->bReachesFull,
 			f->aHalfEmptyIsOffWhenFull, f->bHalfEmptyIsOffWhenFull,
@@ -1403,20 +2572,20 @@ int main(void)
 		DoTests();
 	}
 
-	printf("ASCTester test version 4\n");
+	out("ASCTester test version 5 (draft)\n");
 
 	if (ascExists && (via2Exists || rbvExists))
 	{
-		printf("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
+		out("BoxFlag: %d   ASC Version: $%02X   System %d.%d.%d\n", results.boxFlag, results.ascVersion,
 				(results.sysVersion >> 8) & 0xFF, (results.sysVersion >> 4) & 0x0F,
 				results.sysVersion & 0x0F);
-		printf("AddrMapFlags: $%08X\n", flags);
-		printf("F09: %d ($%02X)  F29: %d ($%02X)\n",
+		out("AddrMapFlags: $%08X\n", flags);
+		out("F09: %d ($%02X)  F29: %d ($%02X)\n",
 				results.regF09Exists, results.regF09InitialValue,
 				results.regF29Exists, results.regF29InitialValue);
-		printf("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
+		out("804Idle: $%02X  M0: %d M1: %d M2: %d ($%02X)\n",
 				results.reg804IdleValue, results.acceptsMode0, results.acceptsMode1, results.acceptsMode2, results.reg801InitialValue);
-		printf("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
+		out("Mono: %d %d Stereo: %d %d\n", results.acceptsConfigMono, results.shouldTestMono,
 				results.acceptsConfigStereo, results.shouldTestStereo);
 
 		if (results.shouldTestMono)
@@ -1427,16 +2596,16 @@ int main(void)
 		{
 			PrintFIFOTests("Stereo FIFO Tests", &results.stereoFIFO);
 		}
-		printf("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
-		printf("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
+		out("VIA2 (%d $%04X) %d\n", results.via2ReadbackConsistent, results.via2AddressDecodeMask, results.via2MirroringOK);
+		out("Idle IRQ %d %d %d (%u), %d %d %d (%u), %d %d %d\n",
 				results.idleIRQWithoutF29, results.floodsIRQWithoutF29, results.irqFloodWithoutF29TakesOverCPU,
 				results.idleIRQWithoutF29Count,
 				results.idleIRQWithF29, results.floodsIRQWithF29, results.irqFloodWithF29TakesOverCPU,
 				results.idleIRQWithF29Count,
 				results.refiresIdleIRQWithF29, results.refiresIdleIRQFloodWithF29, results.irqFloodRefireWithF29TakesOverCPU);
-		printf("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
+		out("FIFO IRQ %d %d %d %d\n", results.testedFIFOIRQs, results.fifoIRQTestedWasA,
 				results.gotIRQOnFIFOHalfEmptyTooSoon, results.gotIRQOnFIFOEmptyTooSoon);
-		printf("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
+		out("(%u %u), (%u %u), (%u %u), (%u %u), %d\n",
 				results.fullIRQCount, results.fullIRQMaxDiff,
 				results.halfEmptyIRQCount, results.halfEmptyIRQMaxDiff,
 				results.emptyIRQCount, results.emptyIRQMaxDiff,
@@ -1444,34 +2613,119 @@ int main(void)
 				results.fifoIRQFiredAfterToggleWhenFull);
 		if (ascVBLTask)
 		{
-			printf("ASC VBL Task was located and temporarily disabled during this test.\n");
+			out("ASC VBL Task was located and temporarily disabled during this test.\n");
 		}
 
-		printf("%d IRQs (start time = %u):\n", results.fifoIRQCount, results.fifoIRQEnableTime);
+		out("%d IRQs (start time = %u):\n", results.fifoIRQCount, results.fifoIRQEnableTime);
 		for (int i = 0; i < results.fifoIRQCount && i < 12; i++)
 		{
-			printf("%s$%02X at t = %5u",
+			out("%s$%02X at t = %5u",
 					i > 0 ? (i & 3 ? ", " : ",\n") : "",
 					results.fifoIRQValues[i],
 					results.fifoIRQTime[i] & 0xFFFF);
 		}
-		printf("%s\n", results.fifoIRQCount > 12 ? ", ..." : "");
-		printf("Cancel %d %d %d %d %d $%02X %u\n", results.testedCancelIRQ, results.cancelIRQInitial,
+		out("%s\n", results.fifoIRQCount > 12 ? ", ..." : "");
+		out("Cancel %d %d %d %d %d $%02X %u\n", results.testedCancelIRQ, results.cancelIRQInitial,
 				results.cancelIRQAfterFill, results.cancelIRQAfterAck, results.cancelIRQAfterWait,
 				results.cancelIRQFinalStatus, results.cancelIRQCount);
+		out("Timer2: %d (ACR $%02X IER $%02X)\n", results.timerAvailable, results.via1ACR, results.via1IER);
+		out("StatusWrite %d (%d) repeat %d, clear $%02X $%02X %d:\n", results.testedStatusWrite,
+				results.statusWriteIRQBefore, results.statusWriteRepeatIRQ,
+				results.fifoClearStatus, results.fifoClearStatusAgain, results.fifoClearIRQ);
+		for (size_t i = 0; i < STATUS_WRITE_COUNT; i++)
+		{
+			const StatusWriteResult *w = &results.statusWrite[i];
+			out("%s$%02X: %d $%02X $%02X %d",
+					i > 0 ? (i & 3 ? ", " : ",\n") : "",
+					statusWriteValues[i], w->irqAfterWrite, w->readback,
+					w->readbackAgain, w->irqAfterRead);
+		}
+		out("\n");
+		out("MaskedLatch %d (%d): %d $%02X $%02X %d $%02X %u\n", results.testedMaskedLatch, results.maskedUsedHalf,
+				results.maskedFlagAfterFill, results.maskedIFRAfterFill, results.maskedStatus,
+				results.maskedFlagAfterRead, results.maskedIFRAfterEnable, results.maskedIRQCount);
+		out("IRQLine %d: %d %d %d %d (%u) $%02X %d\n", results.testedLineType,
+				results.lineIdleIRQ, results.lineFullIRQ, results.lineIRQAfterClear,
+				results.lineSecondIRQ, results.lineSecondTime, results.lineStatus,
+				results.lineIRQAfterRead);
+		out("Threshold %d (%u): %u %u %u, refill %u %u %u\n", results.testedThreshold,
+				results.thresholdFailures,
+				results.thresholdFirstMin, results.thresholdFirstAvg, results.thresholdFirstMax,
+				results.thresholdRefillMin, results.thresholdRefillAvg, results.thresholdRefillMax);
+		if (results.thresholdRefillAvg)
+		{
+			const int32_t r = results.thresholdRefillAvg;
+			const long toHalfMin = (long)results.thresholdFirstMin * THRESHOLD_REFILL * 100 / r;
+			const long toHalfAvg = (long)results.thresholdFirstAvg * THRESHOLD_REFILL * 100 / r;
+			const long toHalfMax = (long)results.thresholdFirstMax * THRESHOLD_REFILL * 100 / r;
+			out("Samples to half: %ld.%02ld %ld.%02ld %ld.%02ld\n",
+					toHalfMin / 100, toHalfMin % 100, toHalfAvg / 100, toHalfAvg % 100,
+					toHalfMax / 100, toHalfMax % 100);
+			out("Full: writes %u %u, level %ld.%02ld %ld.%02ld %ld.%02ld\n",
+					results.fullWritesMin, results.fullWritesMax,
+					(long)results.fullLevelMin / 100, (long)results.fullLevelMin % 100,
+					(long)results.fullLevelAvg / 100, (long)results.fullLevelAvg % 100,
+					(long)results.fullLevelMax / 100, (long)results.fullLevelMax % 100);
+		}
+		out("HalfAck %d: %d %d $%02X %d (%u) %d $%02X %d $%02X, F29 %d %d, refill %d $%02X %d (%u) $%02X\n",
+				results.testedHalfAck, results.ackFlagBefore, results.ackFlagAfterFill, results.ackFillStatus,
+				results.ackHalfFlag, results.ackHalfTime,
+				results.ackFlagAfterClear, results.ackStatus, results.ackFlagAfterRead, results.ackStatusAgain,
+				results.ackFlagAfterF29Off, results.ackFlagAfterF29On,
+				results.ackFlagAfterRefill, results.ackRefillStatus, results.ackSecondFlag, results.ackSecondTime,
+				results.ackFinalStatus);
+		out("Reg808 %d: idle $%02X $%02X $%02X, full %d $%02X $%02X, half %d (%u) $%02X $%02X $%02X\n",
+				results.testedReg808, results.reg808Idle[0], results.reg808Idle[1], results.reg808IdleStatus,
+				results.reg808FullFlag, results.reg808Full[0], results.reg808Full[1],
+				results.reg808Edge, results.reg808EdgeTime, results.reg808Half[0], results.reg808Half[1],
+				results.reg808Status);
+		out("ModeEntry %d: 0>1 %d $%02X, 1>1 %d $%02X, 2>1 %d $%02X,\n"
+				"0>1+clear %d $%02X, 0+clear %d $%02X, 0>1 above half %d $%02X,\n"
+				"0+clear>1 %d $%02X\n",
+				results.testedModeEntry,
+				results.modeEntry[0].flag, results.modeEntry[0].status,
+				results.modeEntry[1].flag, results.modeEntry[1].status,
+				results.modeEntry[2].flag, results.modeEntry[2].status,
+				results.modeEntry[3].flag, results.modeEntry[3].status,
+				results.modeEntry[4].flag, results.modeEntry[4].status,
+				results.modeEntry[5].flag, results.modeEntry[5].status,
+				results.modeEntry[6].flag, results.modeEntry[6].status);
+		out("ModeGate %d (%d): %d, mode 0 %d, mode 1 %d $%02X\n", results.testedModeGate,
+				results.gateUsedHalf, results.gateFlag, results.gateFlagMode0, results.gateFlagMode1,
+				results.gateStatus);
+		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
+		{
+			const LevelResult *l = &results.levels[channel];
+			if (!l->tested)
+			{
+				continue;
+			}
+			out("Levels %s: $%02X $%02X (%u)", channel == 0 ? "A" : channel == 1 ? "B" : "AB",
+					l->before, l->afterFill, l->fillTime);
+			for (int i = 0; i < l->count; i++)
+			{
+				out("%s$%02X@%u", i > 0 && !(i & 3) ? ",\n" : ", ", l->values[i], l->times[i]);
+			}
+			out("\n");
+		}
 	}
 	else
 	{
-		printf("BoxFlag: %d cannot be tested. AddrMapFlags: $%08X\n", *(uint8_t *)BoxFlag, flags);
+		out("BoxFlag: %d cannot be tested. AddrMapFlags: $%08X\n", *(uint8_t *)BoxFlag, flags);
 		if (!ascExists)
 		{
-			printf("- ASC address map flag isn't valid\n");
+			out("- ASC address map flag isn't valid\n");
 		}
 		if (!via2Exists && !rbvExists)
 		{
-			printf("- VIA2 and RBV address map flags aren't valid\n");
+			out("- VIA2 and RBV address map flags aren't valid\n");
 		}
 	}
 
+	SaveResults();
+#ifdef SIMPLE_CONSOLE
+	ShowResults();
+#else
 	getchar();
+#endif
 }

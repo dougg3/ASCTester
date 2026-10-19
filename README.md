@@ -83,6 +83,77 @@ Only use this on a Mac that actually has an ASC or ASC variant. Note that it's v
   - **e** is 1 if an ASC IRQ was still signaled in the VIA2's IFR after interrupts were enabled
   - **f** is the value that was observed in ASC register $804 after the test finished
   - **g** is the total count of IRQs observed after enabling interrupts during the cancel test
+- **Timer2: a (ACR $xx IER $xx)** &mdash; **a** is 1 if VIA1 timer 2 can be used as a stopwatch (it isn't in pulse counting mode). The VIA1 ACR and IER values are shown for information. Mac OS (7.1 at least) has the timer 2 interrupt enabled, so the tests below borrow the timer with interrupts off, mask its interrupt and leave it expired with its flag cleared.
+- **StatusWrite a (b) repeat c, clear $xx $yy d** &mdash; tests whether writing to $804 raises the ASC interrupt again, as the Mac II's MMU mode switch code expects (it reads $804 and writes the flags back to get a new interrupt). Done in FIFO mode with an empty FIFO, the ASC interrupt masked in VIA2's IER, polling VIA2's IFR:
+  - **a** is 1 if the test was performed
+  - **b** is 1 if VIA2 flagged an ASC interrupt again right after clearing it, before any write (the line is held active at idle, e.g. V8)
+  - **c** is 1 if writing $01 a second time, without reading $804 in between, flagged the interrupt again
+  - **$xx** and **$yy** are two reads of $804 right after clearing the FIFO (bit 7 of $803), and **d** is 1 if VIA2 flagged an ASC interrupt after the clear
+  - then for each value written to $804: **$vv: d $xx $yy e**, where **d** is 1 if VIA2 flagged an ASC interrupt after the write, **$xx** and **$yy** are two reads of $804 after it, and **e** is 1 if VIA2 flagged the interrupt again after clearing it, after those reads
+- **MaskedLatch a (h): b $xx $ss c $yy n** &mdash; tests whether VIA2 (or the chip standing in for it; some are Apple ASIC reimplementations) latches the ASC interrupt in its IFR while it's masked in its IER, whether the flag stays once the ASC releases its line, and whether enabling the ASC afterwards delivers it. With the ASC masked and CPU interrupts off, fills the FIFO (on the original ASC, the full condition drives the line), reads $804 (which releases the line on the original ASC), then enables the ASC in the IER and turns CPU interrupts back on:
+  - **a** is 1 if the test was performed
+  - **h** is 1 if the FIFO IRQ test saw no full interrupt: the test then writes 768 samples instead, and polls for IFR bit 4 as the FIFO drains past half empty, so that the steps below apply to the half empty condition
+  - **b** is 1 if IFR bit 4 was set after the FIFO filled up (or drained past half empty)
+  - **$xx** is the raw IFR at that point (on a 6522, bit 7 only reflects enabled sources)
+  - **$ss** is the $804 read that follows
+  - **c** is 1 if IFR bit 4 was still set after that read
+  - **$yy** is the raw IFR after enabling the ASC in the IER
+  - **n** is the number of interrupts taken after turning CPU interrupts back on (the handler doesn't read $804)
+
+  On the IIci (oscilloscope measurements by Doug Brown), the ASC holds its line until $804 is read and the RBV latches the falling edge whatever its IER says, so b, c and n are expected to be 1. Variants with a level interrupt (V8...) release the line only when the FIFO is above half empty, which the IRQLine test below covers.
+- **IRQLine a: b c d e (t) $xx f** &mdash; tests whether the ASC interrupt input of VIA2 is edge or level triggered, and whether the ASC holds its line until $804 is read or pulses it for each condition. Fills the FIFO without reading $804, with the ASC masked in VIA2's IER, polling the IFR:
+  - **a** is 1 if the test was performed
+  - **b** is 1 if VIA2 flagged an ASC interrupt again right after clearing it, before filling the FIFO (idle level, e.g. V8)
+  - **c** is 1 if VIA2 flagged an ASC interrupt after filling the FIFO
+  - **d** is 1 if the flag came back right after clearing it, with $804 not read: the input is level triggered
+  - **e** is 1 if the flag came back later, as the FIFO drained past half empty, with $804 still not read. With an edge triggered input, that means the ASC pulses its line (or drops it and raises it again) for each condition, rather than holding it until $804 is read
+  - **t** is when that happened, in VIA ticks after clearing the flag (about 61440 means it didn't happen within about 80 ms)
+  - **$xx** is $804 read after that
+  - **f** is 1 if the flag came back after clearing it, after reading $804
+- **Threshold a (b): c d e, refill f g h** &mdash; measures the FIFO level at which the half empty condition happens, with VIA1 timer 2 (783.36 kHz on most models). Each of 16 trials writes 768 samples into an empty FIFO as fast as possible, waits for the half empty bit, writes 256 more samples and waits for the half empty bit again. Each trial starts at a slightly different point of the sample period.
+  - **a** is 1 if the test was performed, **b** is the number of trials where a flag never showed up
+  - **c d e** are the shortest, average and longest times in VIA ticks from the first write to the first half empty flag
+  - **f g h** are the same for the time between the two half empty flags, which is exactly 256 sample periods: 256 &times; 35.2 = 9011 ticks at 22257 Hz
+- **Samples to half: a b c** &mdash; the shortest, average and longest times from the first write to the half empty flag, in sample periods (calibrated with the refill time above). The FIFO loses one sample per period from the first write, so if the half empty condition happens when the level goes from N to N-1, this is 768 - (N - 1) periods minus up to one period, plus a small polling delay. Rounding the shortest value up gives 768 - (N - 1): 257 means the condition is on 512 to 511, 258 means 511 to 510.
+- **Full: writes a b, level c d e** &mdash; 16 trials writing into an empty FIFO until the full bit sets: **a** and **b** are the fewest and most writes, **c d e** the lowest, average and highest FIFO level at that point (writes minus the samples played meanwhile, from the time it took). Each trial is off by up to one sample either way; the average is the FIFO level at which the full bit sets, minus a small polling delay (about 0.2 to 0.5).
+- **HalfAck a: p b $ff c (t) d $xx e $yy, F29 f g, refill h $rr i (t2) $zz** &mdash; tests what releases the half empty interrupt, for variants where $804 holds levels rather than flags that a read clears (and that interrupt only when the FIFO drains past half empty). With the ASC masked in VIA2's IER and CPU interrupts off, writes 768 samples into an empty FIFO and polls the IFR:
+  - **a** is 1 if the test was performed
+  - **p** is 1 if VIA2 still flagged an ASC interrupt right after reading $804 and clearing the flag, before the fill (something else holding the line)
+  - **b** is 1 if VIA2 flagged an ASC interrupt after the fill (the FIFO is above half but not full). A sample played at the moment the fill takes the FIFO through the half level can do that.
+  - **$ff** is $804 read right after the fill, which also releases the line, so that the half empty condition below can make a new edge
+  - **c** is 1 if VIA2 flagged an ASC interrupt as the FIFO drained past half empty, and **t** is when, in VIA ticks after the fill: 256 sample periods (about 9000 ticks) after the first write, minus the time the fill took. About 61440 means it didn't happen within about 80 ms. The rest is only done if c is 1.
+  - **d** is 1 if the flag came back right after clearing it in VIA2, with $804 not read: the line is held (level triggered input, or a line held until $804 is read)
+  - **$xx** is $804 read after that, and **e** is 1 if the flag came back after clearing it, after that read
+  - **$yy** is $804 read again
+  - **f** and **g** are 1 if the flag came back after writing 1 to F29 and after writing 0 to it, with the FIFO still below half (0 if there's no F29)
+  - **h** is 1 if VIA2 flagged an ASC interrupt after writing 256 more samples, which brings the FIFO above half again, and **$rr** is $804 read right after that (it releases the line too)
+  - **i** is 1 if VIA2 flagged an ASC interrupt as the FIFO drained past half empty again, and **t2** is when, in VIA ticks after the refill (also 256 sample periods after its first write)
+  - **$zz** is $804 read at the end
+- **Reg808 a: idle $xx $yy $ss, full b $xx $yy, half c (t) $xx $yy $ss** &mdash; tests whether $808, which isn't documented, reads like $804 without clearing it. With the ASC masked in VIA2's IER and CPU interrupts off, $804 is never read between the first and the last step:
+  - **a** is 1 if the test was performed
+  - **idle:** two reads of $808 with no flags in $804, then **$ss**, $804 read after them
+  - **full:** **b** is 1 if VIA2 flagged an ASC interrupt after filling the FIFO up, then two reads of $808
+  - **half:** **c** is 1 if VIA2 flagged an ASC interrupt again as the FIFO drained past half empty, after clearing the flag, and **t** is when, in VIA ticks (about 61440 means it didn't happen within about 80 ms). On the original ASC, which holds its line until $804 is read, that means reading $808 released the line. Then two reads of $808, and **$ss**, $804 read at the end: if it still has the full bits, reading $808 didn't clear them
+- **ModeEntry a: 0>1 f $ss, 1>1 f $ss, 2>1 f $ss, 0>1+clear f $ss, 0+clear f $ss, 0>1 above half f $ss, 0+clear>1 f $ss** &mdash; tests whether entering FIFO mode, or clearing the FIFO, flags anything. The other tests always read $804 right after setting FIFO mode, which would hide it. With the ASC masked in VIA2's IER and CPU interrupts off, each case starts from an empty FIFO in the given mode, with $804 read and the VIA2 flag cleared, then waits a few sample periods after the change. **f** is 1 if VIA2 flagged an ASC interrupt, **$ss** is $804 read after that:
+  - **0>1**, **1>1**, **2>1**: mode 0, 1 (written again) or 2 to FIFO mode
+  - **0>1+clear**: mode 0 to FIFO mode, then a FIFO clear (bit 7 of $803 set and cleared)
+  - **0+clear**: a FIFO clear in mode 0
+  - **0>1 above half**: as 0>1, but with 768 samples written in FIFO mode before going to mode 0 (it shows whether the FIFO keeps them, and whether entering FIFO mode above half flags anything)
+  - **0+clear>1**: a FIFO clear in mode 0, then mode 0 to FIFO mode, without reading $804 in between: whether a condition latched by the clear in mode 0 shows up when entering FIFO mode
+- **ModeGate a (h): b, mode 0 c, mode 1 d $ss** &mdash; tests whether a FIFO condition left pending in $804 survives a switch to mode 0 and back, and whether the interrupt output follows the mode. With the ASC masked in VIA2's IER and CPU interrupts off, raises the full condition, switches to mode 0, clears the VIA2 flag, then switches back to FIFO mode, never reading $804:
+  - **a** is 1 if the test was performed
+  - **h** is 1 if the FIFO IRQ test saw no full interrupt: the test then writes 768 samples and waits for the half empty condition instead
+  - **b** is 1 if VIA2 flagged an ASC interrupt after the condition
+  - **c** is 1 if VIA2 flagged it again after switching to mode 0 and clearing the flag (a level triggered input with the line still asserted)
+  - **d** is 1 if VIA2 flagged it again after switching back to FIFO mode. With an edge triggered input (IIci), that means the line was released in mode 0 and asserted again in FIFO mode, with the condition still latched
+  - **$ss** is $804 read at the end: whether the flags survived the mode changes
+- **Levels X: $bb $ff (t), $vv@t, ...** &mdash; records $804 as a FIFO fills up and drains, to show which bits are levels and which are latched flags (a read clears those, so they show up once and then go away), and what each bit means on variants that differ from the original ASC. With interrupts off, $500 samples are written into an empty FIFO as fast as possible (more than it holds, as it drains meanwhile, so it ends up full), then $804 is polled until about 78 ms after the first write. **X** is the FIFO written: in stereo, **A** and **B** on their own and then **AB** for both; in mono, only **A**.
+  - **$bb** is $804 right before the first write, **$ff** right after the last one, and **t** when that was, in VIA ticks after the first write
+  - then each new value of $804, up to 10, with when it changed in VIA ticks after the first write. A sample period is about 35.2 ticks, so a FIFO filled up at time 0 is half empty at about 18000 and empty at about 36000 (counting from the end of the fill, if writing the samples took longer than playing them)
+
+All the results are also saved to a text file named "ASCTester Results" next to the application.
+
+Recent versions of Retro68's RetroConsole link in most of libstdc++'s iostreams and locale support, which makes the application about 1.2M, more than the 1M partition Retro68's default SIZE resource asks for: under System 7 it then fails to load its code and stops with an "unimplemented trap" system error. `make SIMPLE_CONSOLE=1` builds a version without RetroConsole (about 70K) that shows the results in a plain window instead; click to quit.
 
 ## Expected results gathered from working hardware
 
