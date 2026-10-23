@@ -242,6 +242,12 @@ struct TestResults
 	uint8_t reg806Initial;					// $806 before the test
 	uint8_t reg806Readback[REG806_WRITES];	// $806 read right after writing each of reg806Values
 	uint8_t reg806Restored;					// $806 read after writing the initial value back
+	bool testedStatusMerge;					// True if we ran the status merge test
+	uint8_t mergeSet[2];					// Two $804 reads after writing $01 then $02, without a read in between
+	uint8_t mergeClear;						// $804 read after writing $0F then $00, without a read in between
+	bool mergeUsedHalf;						// The ASC flag case used the half empty condition (no full IRQ)
+	bool mergeFlag;							// VIA2 flagged the ASC after the FIFO condition
+	uint8_t mergeASC[2];					// Two $804 reads after the FIFO condition and writing $00, without a read in between
 };
 
 static void DisableASCVBLTask(void);
@@ -276,6 +282,7 @@ static void Test_Reg808(void);
 static void Test_ModeEntry(void);
 static void Test_ModeGate(void);
 static void Test_Reg806(void);
+static void Test_StatusMerge(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -306,6 +313,7 @@ static ASCTestFunc tests[] =
 	Test_ModeEntry,
 	Test_ModeGate,
 	Test_Reg806,
+	Test_StatusMerge,
 	RestoreASCVBLTask,
 };
 
@@ -2488,6 +2496,76 @@ static void Test_Reg806(void)
 	RestoreIRQ(irqState);
 }
 
+// Tests whether a write to $804 replaces the flags or ORs into them. The status write test
+// reads $804 (clearing it) before each write, so it can't tell. Done in FIFO mode with an
+// empty FIFO, the ASC masked in VIA2's IER and CPU interrupts off: writes $01 then $02, and
+// $0F then $00, without reading $804 in between, then reads it. Then raises the full condition
+// (the half empty one if the FIFO IRQ test saw no full interrupt), waits a few samples so the
+// condition is over, and writes $00 without reading $804 first, to see if a write clears the
+// flags the ASC itself set.
+static void Test_StatusMerge(void)
+{
+	if (!results.testedFIFOIRQs)
+	{
+		return;
+	}
+	results.testedStatusMerge = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	EmptyFIFO();
+
+	const uint16_t irqState = DisableIRQ();
+
+	(void)ascReadReg(0x804);
+	ascWriteReg(0x804, 0x01);
+	ascWriteReg(0x804, 0x02);
+	results.mergeSet[0] = ascReadReg(0x804);
+	results.mergeSet[1] = ascReadReg(0x804);
+
+	ascWriteReg(0x804, 0x0F);
+	ascWriteReg(0x804, 0x00);
+	results.mergeClear = ascReadReg(0x804);
+
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	results.mergeUsedHalf = results.fullIRQCount == 0;
+	if (results.mergeUsedHalf)
+	{
+		for (int i = 0; i < 0x300; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+		(void)ascReadReg(0x804);
+		clearVIA2IRQ();
+		for (uint32_t i = 0; i < 200000; i++)
+		{
+			if (via2ReadReg(0x1A03) & 0x10)
+			{
+				break;
+			}
+		}
+	}
+	else
+	{
+		for (int i = 0; i < 0x500; i++)
+		{
+			writeSample(mono, i & 0xFF);
+		}
+	}
+	results.mergeFlag = via2IRQFlagged();
+	WaitSamples();
+	ascWriteReg(0x804, 0x00);
+	results.mergeASC[0] = ascReadReg(0x804);
+	results.mergeASC[1] = ascReadReg(0x804);
+
+	(void)ascReadReg(0x804);
+	clearVIA2IRQ();
+	RestoreIRQ(irqState);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2728,6 +2806,9 @@ int main(void)
 			out(" $%02X>$%02X", reg806Values[i], results.reg806Readback[i]);
 		}
 		out(", restored $%02X\n", results.reg806Restored);
+		out("StatusMerge %d: $01+$02 $%02X $%02X, $0F+$00 $%02X, ASC (%d) %d +$00 $%02X $%02X\n",
+				results.testedStatusMerge, results.mergeSet[0], results.mergeSet[1], results.mergeClear,
+				results.mergeUsedHalf, results.mergeFlag, results.mergeASC[0], results.mergeASC[1]);
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];
