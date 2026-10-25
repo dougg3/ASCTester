@@ -372,6 +372,45 @@ Levels B: $0E $0A (1323), $02@1333, $06@19318, $0E@37343
 Levels AB: $0E $0A (1584), $02@1615, $06@19600, $0E@37625
 ```
 
+### Quadra 610
+
+```
+ASCTester test version 5
+BoxFlag: 47   ASC Version: $BB   System 7.5.5
+AddrMapFlags: $0580183F
+F09: 1 ($01)  F29: 1 ($01)
+804Idle: $0E  M0: 1 M1: 1 M2: 0 ($01)
+Mono: 1 0 Stereo: 0 1
+Stereo FIFO Tests:
+1 0 1 1 1 1 0 1 0 1 1 1 (0 1105)
+VIA2 (1 $0000) 1
+Idle IRQ 0 0 0 (0), 1 0 0 (1), 1 0 0
+FIFO IRQ 1 0 0 0
+(0 0), (1 1), (0 0), (0 0), 0
+1 IRQs (start time = 2762):
+$06 at t =  2763
+Cancel 1 0 1 0 0 $0E 0
+Timer2: 1 (ACR $0C IER $A7)
+StatusWrite 1 (0) repeat 0, clear $0E $0E 0:
+$01: 0 $0E $0E 0, $02: 0 $0E $0E 0, $04: 0 $0E $0E 0, $08: 0 $0E $0E 0,
+$0F: 0 $0E $0E 0, $10: 0 $0E $0E 0, $80: 0 $0E $0E 0, $00: 0 $0E $0E 0
+MaskedLatch 1 (1): 1 $92 $06 1 $92 1
+IRQLine 1: 0 0 0 1 (17979) $06 0
+Threshold 1 (0): 8986 9002 9020, refill 9010 9010 9012
+Samples to half: 255.31 255.77 256.28
+Full: writes 1116 1117, level 1023.04 1023.72 1023.90
+HalfAck 1: 0 0 $02 1 (7748) 0 $06 0 $06, F29 0 1, refill 0 $02 1 (8541) $06
+Reg808 1: idle $00 $00 $0E, full 0 $00 $00, half 1 (17992) $00 $00 $06
+ModeEntry 1: 0>1 0 $0E, 1>1 0 $0E, 2>1 0 $0E,
+0>1+clear 0 $0E, 0+clear 0 $0E, 0>1 above half 0 $02,
+0+clear>1 0 $0E
+ModeGate 1 (1): 1, mode 0 0, mode 1 0 $06
+Reg806 $E0: $00>$00 $EE>$E0 $FF>$E0 $55>$40 $AA>$A0, restored $E0
+Levels A: $0E $0A (1130), $02@1141, $06@19132, $0E@37152
+Levels B: $0E $0A (1369), $02@1390, $06@19378, $0E@37403
+Levels AB: $0E $0A (1614), $02@1640, $06@19625, $0E@37650
+```
+
 ## Older results needing a re-test with the latest version
 
 ### Quadra 700
