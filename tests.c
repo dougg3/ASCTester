@@ -130,6 +130,35 @@ struct PortDataResult
 	uint8_t outputs[PORT_DATA_OUTPUTS];		// Bytes read at $830-$837
 };
 
+// Values written to $80A by the record test
+#define RECORD_MODES						4
+#define RECORD_CHANGES						6
+static const uint8_t reg80AValues[] = { 0x00, 0x01, 0x02, 0x03, 0xFF };
+#define REG80A_WRITES						(sizeof(reg80AValues) / sizeof(reg80AValues[0]))
+
+// The status changes after writing one value to $80A with nothing else going on
+struct RecordModeResult
+{
+	uint8_t first;							// $804 right after the write
+	uint8_t count;							// Changes of $804 recorded
+	uint8_t values[RECORD_CHANGES];			// $804 after each change
+	uint16_t times[RECORD_CHANGES];			// When, in VIA ticks after the write
+	bool flag;								// VIA2 flagged an ASC interrupt
+	uint16_t flagTime;						// When, in VIA ticks after the write
+};
+
+// Reads of FIFO A of one size after a wait, with the status changes they caused
+#define RECORD_READ_VALUES					2
+#define RECORD_READ_SIZES					3
+struct RecordReadResult
+{
+	uint8_t before;							// $804 before the first read
+	uint32_t values[RECORD_READ_VALUES];	// The first values read
+	uint8_t count;							// Changes of $804 recorded
+	uint8_t statuses[RECORD_CHANGES];		// $804 after each change
+	uint16_t reads[RECORD_CHANGES];			// After how many reads
+};
+
 // Test results
 struct TestResults
 {
@@ -287,6 +316,12 @@ struct TestResults
 	uint16_t portFillB[PORT_ACCESSES];		// Byte writes to fill FIFO B after each kind of access
 	bool testedPortData;					// The FIFO port data test was performed
 	PortDataResult portData[PORT_DATA_CASES];
+	bool testedRecord;						// The record test was performed
+	uint8_t reg80AInitial;					// $80A before the test
+	uint8_t reg80AReadback[REG80A_WRITES];	// $80A read back after writing each value
+	uint8_t reg80ARestored;					// $80A after writing the initial value back
+	RecordModeResult recordMode[RECORD_MODES];
+	RecordReadResult recordRead[2][RECORD_READ_SIZES];
 };
 
 static void DisableASCVBLTask(void);
@@ -324,6 +359,7 @@ static void Test_Reg806(void);
 static void Test_StatusMerge(void);
 static void Test_FIFOPorts(void);
 static void Test_PortData(void);
+static void Test_Record(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -357,6 +393,7 @@ static ASCTestFunc tests[] =
 	Test_StatusMerge,
 	Test_FIFOPorts,
 	Test_PortData,
+	Test_Record,
 	RestoreASCVBLTask,
 };
 
@@ -2758,6 +2795,135 @@ static void Test_PortData(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Tests the play/record register $80A: what reads back, what each of the values does to
+// $804 and the interrupt with nothing being played, and what reads of FIFO A get and how far
+// each one moves it. On the EASC, bit 0 is record and bit 1 the 22 kHz rate.
+// Both 2 and 3 are read from, at the 22 kHz rate, in case bit 0 means the opposite here.
+// F09 is enabled since it's related to recording on the newer variants, with F29 disabled.
+static void Test_Record(void)
+{
+	if (!results.timerAvailable || results.ascVersion == 0x00 ||
+			(!results.shouldTestMono && !results.shouldTestStereo))
+	{
+		return;
+	}
+	results.testedRecord = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+	if (results.regF09Exists)
+	{
+		ascWriteReg(0xF09, 0);
+	}
+	if (results.regF29Exists)
+	{
+		ascWriteReg(0xF29, 1);
+	}
+
+	results.reg80AInitial = ascReadReg(0x80A);
+	for (size_t i = 0; i < REG80A_WRITES; i++)
+	{
+		ascWriteReg(0x80A, reg80AValues[i]);
+		results.reg80AReadback[i] = ascReadReg(0x80A);
+	}
+	ascWriteReg(0x80A, results.reg80AInitial);
+	results.reg80ARestored = ascReadReg(0x80A);
+
+	for (int mode = 0; mode < RECORD_MODES; mode++)
+	{
+		RecordModeResult *r = &results.recordMode[mode];
+
+		ascWriteReg(0x80A, 0);
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		BorrowTimer();
+		(void)ascReadReg(0x804);
+		clearVIA2IRQ();
+		timerStart();
+		ascWriteReg(0x80A, mode);
+		r->first = ascReadReg(0x804);
+
+		uint8_t last = r->first;
+		// A full FIFO takes about 36000 ticks at 22 kHz
+		while (timerElapsed() < 0xF000)
+		{
+			const uint8_t status = ascReadReg(0x804);
+			if (status != last && r->count < RECORD_CHANGES)
+			{
+				r->values[r->count] = status;
+				r->times[r->count] = timerElapsed();
+				r->count++;
+				last = status;
+			}
+			if (!r->flag && (via2ReadReg(0x1A03) & 0x10))
+			{
+				r->flag = true;
+				r->flagTime = timerElapsed();
+			}
+		}
+		ReturnTimer();
+		RestoreIRQ(irqState);
+	}
+
+	for (int mode = 0; mode < 2; mode++)
+	{
+		for (int size = 0; size < RECORD_READ_SIZES; size++)
+		{
+			RecordReadResult *r = &results.recordRead[mode][size];
+
+			ascWriteReg(0x80A, 0);
+			EmptyFIFO();
+
+			const uint16_t irqState = DisableIRQ();
+			BorrowTimer();
+			timerStart();
+			ascWriteReg(0x80A, mode + 2);
+			while (timerElapsed() < 0xC000)
+			{
+			}
+			r->before = ascReadReg(0x804);
+
+			uint8_t last = r->before;
+			for (uint16_t reads = 1; reads <= 0x600; reads++)
+			{
+				uint32_t value;
+				if (size == 0)
+				{
+					value = ascReadReg(0x000);
+				}
+				else if (size == 1)
+				{
+					value = ascReadWord(0x000);
+				}
+				else
+				{
+					value = ascReadLong(0x000);
+				}
+				if (reads <= RECORD_READ_VALUES)
+				{
+					r->values[reads - 1] = value;
+				}
+				const uint8_t status = ascReadReg(0x804);
+				if (status != last && r->count < RECORD_CHANGES)
+				{
+					r->statuses[r->count] = status;
+					r->reads[r->count] = reads;
+					r->count++;
+					last = status;
+				}
+			}
+			ReturnTimer();
+			RestoreIRQ(irqState);
+		}
+	}
+
+	ascWriteReg(0x80A, results.reg80AInitial);
+	EmptyFIFO();
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -3019,6 +3185,36 @@ int main(void)
 				out(" %02X", r->outputs[i]);
 			}
 			out("\n");
+		}
+		out("Record %d: $%02X", results.testedRecord, results.reg80AInitial);
+		for (size_t i = 0; i < REG80A_WRITES; i++)
+		{
+			out(" $%02X>$%02X", reg80AValues[i], results.reg80AReadback[i]);
+		}
+		out(", restored $%02X\n", results.reg80ARestored);
+		for (int mode = 0; results.testedRecord && mode < RECORD_MODES; mode++)
+		{
+			const RecordModeResult *r = &results.recordMode[mode];
+			out("$80A=%d: $%02X", mode, r->first);
+			for (int i = 0; i < r->count; i++)
+			{
+				out(", $%02X@%u", r->values[i], r->times[i]);
+			}
+			out(", IRQ %d (%u)\n", r->flag, r->flagTime);
+		}
+		for (int mode = 0; results.testedRecord && mode < 2; mode++)
+		{
+			for (int size = 0; size < RECORD_READ_SIZES; size++)
+			{
+				const RecordReadResult *r = &results.recordRead[mode][size];
+				out("Read $80A=%d %c: $%02X %08lX %08lX", mode + 2, "BWL"[size], r->before,
+						(unsigned long)r->values[0], (unsigned long)r->values[1]);
+				for (int i = 0; i < r->count; i++)
+				{
+					out(", $%02X@%u", r->statuses[i], r->reads[i]);
+				}
+				out("\n");
+			}
 		}
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
