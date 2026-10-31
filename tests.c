@@ -96,6 +96,40 @@ struct LevelResult
 #define REG806_WRITES 5
 static const uint8_t reg806Values[REG806_WRITES] = { 0x00, 0xEE, 0xFF, 0x55, 0xAA };
 
+// Accesses to the FIFO ports timed by the FIFO port test: size 0 is no access at all
+struct PortAccess
+{
+	const char *name;
+	uint16_t offset;
+	uint8_t size;
+};
+
+static const PortAccess portAccesses[] =
+{
+	{ "none", 0x000, 0 },
+	{ "b000", 0x000, 1 },
+	{ "b001", 0x001, 1 },
+	{ "w000", 0x000, 2 },
+	{ "l000", 0x000, 4 },
+	{ "b400", 0x400, 1 },
+	{ "w400", 0x400, 2 },
+	{ "l400", 0x400, 4 },
+};
+#define PORT_ACCESSES						(sizeof(portAccesses) / sizeof(portAccesses[0]))
+// Accesses made before filling each FIFO: few enough to leave room with 4 samples per access
+#define PORT_ACCESS_COUNT					100
+
+// What the FIFO port data test writes before reading back
+#define PORT_DATA_CASES						4
+#define PORT_DATA_OUTPUTS					8
+
+struct PortDataResult
+{
+	uint8_t bytes[4];						// Bytes read at $000, $001, $400, $401
+	uint16_t words[2];						// Words read at $000, $400
+	uint8_t outputs[PORT_DATA_OUTPUTS];		// Bytes read at $830-$837
+};
+
 // Test results
 struct TestResults
 {
@@ -248,6 +282,11 @@ struct TestResults
 	bool mergeUsedHalf;						// The ASC flag case used the half empty condition (no full IRQ)
 	bool mergeFlag;							// VIA2 flagged the ASC after the FIFO condition
 	uint8_t mergeASC[2];					// Two $804 reads after the FIFO condition and writing $00, without a read in between
+	bool testedFIFOPorts;					// The FIFO port test was performed
+	uint16_t portFillA[PORT_ACCESSES];		// Byte writes to fill FIFO A after each kind of access
+	uint16_t portFillB[PORT_ACCESSES];		// Byte writes to fill FIFO B after each kind of access
+	bool testedPortData;					// The FIFO port data test was performed
+	PortDataResult portData[PORT_DATA_CASES];
 };
 
 static void DisableASCVBLTask(void);
@@ -283,6 +322,8 @@ static void Test_ModeEntry(void);
 static void Test_ModeGate(void);
 static void Test_Reg806(void);
 static void Test_StatusMerge(void);
+static void Test_FIFOPorts(void);
+static void Test_PortData(void);
 
 // List of all tests
 static ASCTestFunc tests[] =
@@ -314,6 +355,8 @@ static ASCTestFunc tests[] =
 	Test_ModeGate,
 	Test_Reg806,
 	Test_StatusMerge,
+	Test_FIFOPorts,
+	Test_PortData,
 	RestoreASCVBLTask,
 };
 
@@ -2566,6 +2609,155 @@ static void Test_StatusMerge(void)
 	FinishIRQLineTest(&saved);
 }
 
+// Makes one access to a FIFO port, with a value that has different bytes
+static void portAccess(const PortAccess *a, uint8_t base)
+{
+	const uint8_t b1 = base + 1, b2 = base + 2, b3 = base + 3;
+
+	if (a->size == 1)
+	{
+		ascWriteReg(a->offset, base);
+	}
+	else if (a->size == 2)
+	{
+		ascWriteWord(a->offset, (base << 8) | b1);
+	}
+	else if (a->size == 4)
+	{
+		ascWriteLong(a->offset, ((uint32_t)base << 24) | ((uint32_t)b1 << 16) | ((uint16_t)b2 << 8) | b3);
+	}
+}
+
+// Whether $804 says that a FIFO is full. The $BB and $BC variants have one full bit
+// (bit 3) for both, and their bit 1 is always set while playing.
+static bool portFull(uint8_t status, bool fifoB)
+{
+	if (fifoB || results.ascVersion == 0xBB || results.ascVersion == 0xBC)
+	{
+		return status & 0x08;
+	}
+	return status & 0x02;
+}
+
+// Tests how many samples byte, word and long writes to the FIFO ports put into each FIFO.
+// With an empty FIFO and interrupts off, makes a number of accesses of one kind, then writes
+// bytes to FIFO A or to FIFO B until it's full and counts them. The more samples the accesses
+// put into that FIFO, the fewer bytes it takes. This doesn't depend on hearing the data.
+static void Test_FIFOPorts(void)
+{
+	if (!results.shouldTestMono && !results.shouldTestStereo)
+	{
+		return;
+	}
+	results.testedFIFOPorts = true;
+
+	const bool mono = !results.shouldTestStereo;
+	SavedASCState saved;
+	PrepareIRQLineTest(mono, &saved);
+
+	for (size_t i = 0; i < PORT_ACCESSES; i++)
+	{
+		const PortAccess *a = &portAccesses[i];
+		for (int fifo = 0; fifo < (mono ? 1 : 2); fifo++)
+		{
+			if (mono && a->offset >= 0x400)
+			{
+				continue;
+			}
+			EmptyFIFO();
+
+			const uint16_t irqState = DisableIRQ();
+			(void)ascReadReg(0x804);
+			for (int n = 0; n < PORT_ACCESS_COUNT; n++)
+			{
+				portAccess(a, n);
+			}
+			uint16_t writes;
+			for (writes = 1; writes <= 0x800; writes++)
+			{
+				ascWriteReg(fifo ? 0x400 : 0x000, writes & 0xFF);
+				// On some variants the bit also means empty, and may lag behind the first writes
+				if (writes > 16 && portFull(ascReadReg(0x804), fifo))
+				{
+					break;
+				}
+			}
+			(fifo ? results.portFillB : results.portFillA)[i] = writes;
+			RestoreIRQ(irqState);
+		}
+	}
+
+	FinishIRQLineTest(&saved);
+}
+
+// Reads the FIFO ports and $830-$837 as bytes and words. Most of these are write only
+// or undocumented: the values are there to see which byte of a write ends up where.
+static void portDataRead(PortDataResult *r)
+{
+	r->bytes[0] = ascReadReg(0x000);
+	r->bytes[1] = ascReadReg(0x001);
+	r->bytes[2] = ascReadReg(0x400);
+	r->bytes[3] = ascReadReg(0x401);
+	r->words[0] = ascReadWord(0x000);
+	r->words[1] = ascReadWord(0x400);
+	for (int i = 0; i < PORT_DATA_OUTPUTS; i++)
+	{
+		r->outputs[i] = ascReadReg(0x830 + i);
+	}
+}
+
+// Tests which bytes of a word or long write go to which FIFO, in case the chip lets us see
+// them (on the IIci, $830-$837 read the current output). The volume is turned down meanwhile.
+// Writes $11 to A and $22 to B; words $1234 to $000; longs $12345678 to $000; words
+// $5678 to $400, all in the same FIFO state, waits a few samples and reads back.
+static void Test_PortData(void)
+{
+	if (!results.shouldTestStereo)
+	{
+		return;
+	}
+	results.testedPortData = true;
+
+	SavedASCState saved;
+	PrepareIRQLineTest(false, &saved);
+	const uint8_t volume = ascReadReg(0x806);
+	ascWriteReg(0x806, 0);
+
+	for (int c = 0; c < PORT_DATA_CASES; c++)
+	{
+		EmptyFIFO();
+
+		const uint16_t irqState = DisableIRQ();
+		for (int n = 0; n < PORT_ACCESS_COUNT; n++)
+		{
+			if (c == 0)
+			{
+				ascWriteReg(0x000, 0x11);
+				ascWriteReg(0x400, 0x22);
+			}
+			else if (c == 1)
+			{
+				ascWriteWord(0x000, 0x1234);
+			}
+			else if (c == 2)
+			{
+				ascWriteLong(0x000, 0x12345678);
+			}
+			else
+			{
+				ascWriteWord(0x400, 0x5678);
+			}
+		}
+		WaitSamples();
+		portDataRead(&results.portData[c]);
+		RestoreIRQ(irqState);
+	}
+
+	EmptyFIFO();
+	ascWriteReg(0x806, volume);
+	FinishIRQLineTest(&saved);
+}
+
 // Runs all the tests
 void DoTests(void)
 {
@@ -2576,7 +2768,7 @@ void DoTests(void)
 }
 
 // Everything printed, kept to save it to a file at the end
-static char outText[4096];
+static char outText[8192];
 static size_t outLength;
 
 // Prints to the console and keeps a copy for the results file
@@ -2809,6 +3001,25 @@ int main(void)
 		out("StatusMerge %d: $01+$02 $%02X $%02X, $0F+$00 $%02X, ASC (%d) %d +$00 $%02X $%02X\n",
 				results.testedStatusMerge, results.mergeSet[0], results.mergeSet[1], results.mergeClear,
 				results.mergeUsedHalf, results.mergeFlag, results.mergeASC[0], results.mergeASC[1]);
+		out("FIFOPort %d:", results.testedFIFOPorts);
+		for (size_t i = 0; i < PORT_ACCESSES; i++)
+		{
+			out("%s%s %u %u", i > 0 && !(i & 3) ? ",\n" : i > 0 ? ", " : " ", portAccesses[i].name,
+					results.portFillA[i], results.portFillB[i]);
+		}
+		out("\n");
+		out("PortData %d:\n", results.testedPortData);
+		for (int c = 0; results.testedPortData && c < PORT_DATA_CASES; c++)
+		{
+			const PortDataResult *r = &results.portData[c];
+			out("%02X %02X %02X %02X %04X %04X,", r->bytes[0], r->bytes[1], r->bytes[2], r->bytes[3],
+					r->words[0], r->words[1]);
+			for (int i = 0; i < PORT_DATA_OUTPUTS; i++)
+			{
+				out(" %02X", r->outputs[i]);
+			}
+			out("\n");
+		}
 		for (int channel = 0; channel < LEVEL_CHANNELS; channel++)
 		{
 			const LevelResult *l = &results.levels[channel];
