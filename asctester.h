@@ -39,6 +39,30 @@ static inline void __attribute__ ((always_inline)) ascWriteStereoSample(uint8_t 
 	);
 }
 
+// Reads a word from the ASC
+static inline uint16_t ascReadWord(uint16_t offset)
+{
+	return *((volatile uint16_t *)((*(uint8_t **)ASCBase) + offset));
+}
+
+// Writes a word to the ASC
+static inline void ascWriteWord(uint16_t offset, uint16_t value)
+{
+	*((volatile uint16_t *)((*(uint8_t **)ASCBase) + offset)) = value;
+}
+
+// Reads a long from the ASC
+static inline uint32_t ascReadLong(uint16_t offset)
+{
+	return *((volatile uint32_t *)((*(uint8_t **)ASCBase) + offset));
+}
+
+// Writes a long to the ASC
+static inline void ascWriteLong(uint16_t offset, uint32_t value)
+{
+	*((volatile uint32_t *)((*(uint8_t **)ASCBase) + offset)) = value;
+}
+
 // Reads a VIA2 register
 static inline uint8_t via2ReadReg(uint16_t offset)
 {
